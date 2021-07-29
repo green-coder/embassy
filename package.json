@@ -1,0 +1,6 @@
+{
+  "name": "ambassy",
+  "devDependencies": {
+    "shadow-cljs": "2.12.5"
+  }
+}

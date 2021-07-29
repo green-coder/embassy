@@ -1,0 +1,13 @@
+{:paths   ["src"]
+ :deps    {org.clojure/clojure                 {:mvn/version "1.10.3"}
+           org.clojure/clojurescript           {:mvn/version "1.10.879"}
+
+           ;; Client
+           thheller/shadow-cljs                {:mvn/version "2.15.2"}
+           diffuse/diffuse                     {:mvn/version "0.0.5"}
+           camel-snake-kebab/camel-snake-kebab {:mvn/version "0.4.2"}
+           com.lambdaisland/dom-types          {:mvn/version "0.0.11"}}
+
+ :aliases {;; clojure -M:outdated --upgrade
+           :outdated {:extra-deps {com.github.liquidz/antq {:mvn/version "0.16.0"}}
+                      :main-opts  ["-m" "antq.core"]}}}
