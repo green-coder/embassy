@@ -1,7 +1,7 @@
 (ns ambassy.client.core
   (:require
     [clojure.string :as str]
-    [lambdaisland.dom-types :as dom-types]
+    [lambdaisland.dom-types]
     [ambassy.client.helper :as h]))
 
 ;; Things to do:
@@ -67,7 +67,7 @@
     (let [^js dom-child-nodes (-> dom .-childNodes)
           {:keys [remove-attrs add-attrs
                   remove-listeners add-listeners
-                  children-diff children-moves]} vdom]
+                  children-diff]} vdom]
 
       (doseq [attr remove-attrs]
         (-> dom (.removeAttribute attr)))
@@ -81,41 +81,54 @@
       (doseq [[event-type event-handler] add-listeners]
         (add-listeners dom event-type event-handler))
 
-      (loop [operations (seq children-diff)
-             index 0]
-        (when operations
-          (let [[op arg] (first operations)
-                next-operations (next operations)]
-            (case op
-              :no-op (recur next-operations (+ index arg))
-              :update (do
-                        (dotimes [i (count arg)]
-                          (let [^js child-element (-> dom-child-nodes (.item (+ index i)))
-                                ^js new-child-element (apply-vdom* child-element (nth arg i))]
-                            (-> child-element (.replaceWith new-child-element))))
-                        (recur next-operations (+ index (count arg))))
-              :remove (do
-                        (dotimes [_ arg]
-                          (-> dom (.removeChild (-> dom-child-nodes (.item index)))))
-                        (recur next-operations index))
-              :insert (do
-                        (if (< index (-> dom-child-nodes .-length))
-                          (let [node-after (-> dom-child-nodes (.item index))]
-                            (doseq [child-vdom arg]
-                              (-> dom (.insertBefore (create-dom child-vdom) node-after))))
-                          (doseq [child-vdom arg]
-                            (-> dom (.appendChild (create-dom child-vdom)))))
-                        (recur next-operations (+ index (count arg))))))))
-      #_
-      (let [moves (mapv (fn [[size index-from index-to]]
-                          [(mapv (fn [index]
-                                   (-> dom-child-nodes (.item index)))
-                                 (range index-from (+ index-from size)))
-                           (-> dom-child-nodes (.item index-to))])
-                        children-moves)]
-        (doseq [[nodes-from ^js/Element node-to] moves]
-          (-> node-to .-before (.apply node-to (into-array nodes-from)))
-          #_(apply js-invoke node-to "before" nodes-from)))
+      (let [take-id->size (into {}
+                                (keep (fn [[op-type id size]]
+                                        (when (= op-type :take)
+                                          [id size])))
+                                children-diff)
+            take-id->dom-nodes (-> (reduce (fn [[m index] [op arg1 arg2]]
+                                             (case op
+                                               (:no-op :remove) [m (+ index arg1)]
+                                               (:update :insert) [m (+ index (count arg1))]
+                                               :take [(assoc m arg1 (mapv (fn [index]
+                                                                            (-> dom-child-nodes (.item index)))
+                                                                          (range index (+ index arg2))))
+                                                      (+ index arg2)]
+                                               :put [m (+ index (take-id->size arg1))]))
+                                           [{} 0]
+                                           children-diff)
+                                   first)]
+        (loop [operations (seq children-diff)
+               index 0]
+          (when operations
+            (let [[op arg1 arg2] (first operations) ;; TODO: simplify this destructure
+                  next-operations (next operations)]
+              (case op
+                :no-op (recur next-operations (+ index arg1))
+                :update (do
+                          (dotimes [i (count arg1)]
+                            (let [^js child-element     (-> dom-child-nodes (.item (+ index i)))
+                                  ^js new-child-element (apply-vdom* child-element (nth arg1 i))]
+                              (-> child-element (.replaceWith new-child-element))))
+                          (recur next-operations (+ index (count arg1))))
+                :remove (do
+                          (dotimes [_ arg1]
+                            (-> dom (.removeChild (-> dom-child-nodes (.item index)))))
+                          (recur next-operations index))
+                :insert (do
+                          (if (< index (-> dom-child-nodes .-length))
+                            (let [node-after (-> dom-child-nodes (.item index))]
+                              (doseq [child-vdom arg1]
+                                (-> dom (.insertBefore (create-dom child-vdom) node-after))))
+                            (doseq [child-vdom arg1]
+                              (-> dom (.appendChild (create-dom child-vdom)))))
+                          (recur next-operations (+ index (count arg1))))
+                :take (recur next-operations (+ index arg2))
+                :put (let [^js node-to (-> dom-child-nodes (.item index))
+                           size (take-id->size arg1)
+                           nodes-from (take-id->dom-nodes arg1)]
+                       (-> node-to .-before (.apply node-to (into-array nodes-from)))
+                       (recur next-operations (+ index size))))))))
 
       dom)))
 
@@ -162,16 +175,11 @@
    ;; Re-use the vector format (index-op) from Diffuse.
    :children-diff [[:no-op size0]
                    [:update [vdom-diff0 vdom-diff1 ,,,]]
-                   [:remove size2]
+                   [:remove size1]
                    [:insert [vdom0 vdom1 ,,,]]
-                   ,,,]
-
-   ;; Those changes are to be processed sequentially.
-   ;; Each index mean a position at the time right before the move is processed.
-   ;; This format is designed to be easily reversed if needed during diff composition.
-   :children-moves [[size0 from-index0 to-index1]
-                    [size1 from-index2 to-index3]
-                    ,,,]}
+                   [:take id0 size2]
+                   [:put id0]
+                   ,,,]}
 
   ,)
 
@@ -201,11 +209,13 @@
                                                                                         [1 7 6]]}]]]}]]
                                  [:insert [(h/hiccup [:p "xxx"])
                                            (h/hiccup [:div "yyy"])]]]})
-    ;;(apply-vdom (h/remove-in [0] 1))
+    (apply-vdom (h/remove-in [0] 1))
+    (apply-vdom (h/update-in [0 1] (h/move 2 6 2)))
     ;;(apply-vdom (h/remove-in [0 1 3] 3))
     ;;(apply-vdom (h/insert-in [0 1 3] (h/hiccup [:li "aaa"]) (h/hiccup [:li "bbb"])))
     ;;(apply-vdom (h/insert-in [0 2] (h/hiccup [:p "xxx"]) (h/hiccup [:div "yyy"])))
 
+    #_
     (apply-vdom (h/comp-> (h/remove-in [0] 1)
                           (h/remove-in [0 1 3] 3)
                           (h/insert-in [0 1 3] (h/hiccup [:li "aaa"]) (h/hiccup [:li "bbb"]))

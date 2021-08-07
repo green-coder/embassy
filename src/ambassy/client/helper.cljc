@@ -111,7 +111,18 @@
       ;; The great /dev/null operator
       {:tag nil})))
 
-(declare comp->)
+(defn move [from-index to-index size]
+  {:children-diff (if (<= from-index to-index)
+                    [[:no-op from-index]
+                     [:take 0 size]
+                     [:no-op (- to-index from-index size)]
+                     [:put 0]]
+                    [[:no-op to-index]
+                     [:put 0]
+                     [:no-op (- from-index to-index size)]
+                     [:take 0 size]])})
+
+(declare comp)
 
 ;; Copied from the Diffuse library
 (defn- index-op-size [[op arg]]
@@ -175,7 +186,7 @@
                             :no-op (recur (conj output base-iop)
                                           (rest split-new-iops)
                                           (rest split-base-iops))
-                            :update (recur (conj output [:update (mapv comp-> base-arg new-arg)])
+                            :update (recur (conj output [:update (mapv comp new-arg base-arg)])
                                            (rest split-new-iops)
                                            (rest split-base-iops))
                             :remove (recur (conj output new-iop)
@@ -185,7 +196,7 @@
                             :no-op (recur (conj output base-iop)
                                           (rest split-new-iops)
                                           (rest split-base-iops))
-                            :update (recur (conj output [:insert (mapv comp-> base-arg new-arg)])
+                            :update (recur (conj output [:insert (mapv comp new-arg base-arg)])
                                            (rest split-new-iops)
                                            (rest split-base-iops))
                             :remove (recur output
@@ -213,9 +224,9 @@
                                                      (pos? (count insert-elms)) (conj [:insert insert-elms]))))))))
         iops))
 
-(defn comp->
+(defn comp
   ([vdom] vdom)
-  ([vdom1 vdom2]
+  ([vdom2 vdom1]
    (cond
      ;; nil represents a no-change diff
      (nil? vdom1) vdom2
@@ -242,7 +253,7 @@
                             :no-op (recur (into children-out (take arg) children-in)
                                           (subvec children-in arg)
                                           next-operations)
-                            :update (recur (into children-out (mapv comp-> children-in arg))
+                            :update (recur (into children-out (mapv comp arg children-in))
                                            (subvec children-in (count arg))
                                            next-operations)
                             :remove (recur children-out
@@ -290,11 +301,11 @@
              (seq add-listeners) (assoc :add-listeners add-listeners)
              (seq children-diff) (assoc :children-diff children-diff))
            not-empty))))
-  ([vdom1 vdom2 & more-vdoms]
-   (reduce comp-> (comp-> vdom1 vdom2) more-vdoms)))
+  ([vdom2 vdom1 & more-vdoms]
+   (reduce comp (comp vdom2 vdom1) more-vdoms)))
 
-(defn comp [& vdoms]
-  (apply comp-> (reverse vdoms)))
+(defn comp-> [& vdoms]
+  (apply comp (reverse vdoms)))
 
 (defn comp-in-> [path & vdoms]
   (update-in path (apply comp-> vdoms)))
@@ -320,5 +331,8 @@
           (remove-in [0 1 3] 3)
           (insert-in [0 1 3] (hiccup [:li "aaa"]) (hiccup [:li "bbb"]))
           (insert-in [0 2] (hiccup [:p "xxx"]) (hiccup [:div "yyy"])))
+
+  (comp (move 2 4 1)
+        (move 2 4 1))
 
   ,)
