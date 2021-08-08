@@ -2,7 +2,8 @@
   (:require
     [clojure.string :as str]
     [lambdaisland.dom-types]
-    [ambassy.client.helper :as h]))
+    [ambassy.client.helper :as h]
+    [ambassy.client.util :as u]))
 
 ;; Things to do:
 ;; [x] Add support for the on-xxx.
@@ -101,7 +102,7 @@
         (loop [operations (seq children-diff)
                index 0]
           (when operations
-            (let [[op arg1 arg2] (first operations) ;; TODO: simplify this destructure
+            (let [[op arg1 arg2] (first operations)
                   next-operations (next operations)]
               (case op
                 :no-op (recur next-operations (+ index arg1))
