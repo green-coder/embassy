@@ -83,7 +83,7 @@
         (add-listeners dom event-type event-handler))
 
       (let [take-id->size (into {}
-                                (keep (fn [[op-type id size]]
+                                (keep (fn [[op-type size id]]
                                         (when (= op-type :take)
                                           [id size])))
                                 children-diff)
@@ -91,9 +91,9 @@
                                              (case op
                                                (:no-op :remove) [m (+ index arg1)]
                                                (:update :insert) [m (+ index (count arg1))]
-                                               :take [(assoc m arg1 (mapv (fn [index]
+                                               :take [(assoc m arg2 (mapv (fn [index]
                                                                             (-> dom-child-nodes (.item index)))
-                                                                          (range index (+ index arg2))))
+                                                                          (range index (+ index arg1))))
                                                       (+ index arg2)]
                                                :put [m (+ index (take-id->size arg1))]))
                                            [{} 0]
@@ -124,7 +124,7 @@
                             (doseq [child-vdom arg1]
                               (-> dom (.appendChild (create-dom child-vdom)))))
                           (recur next-operations (+ index (count arg1))))
-                :take (recur next-operations (+ index arg2))
+                :take (recur next-operations (+ index arg1))
                 :put (let [^js node-to (-> dom-child-nodes (.item index))
                            size (take-id->size arg1)
                            nodes-from (take-id->dom-nodes arg1)]
@@ -178,7 +178,7 @@
                    [:update [vdom-diff0 vdom-diff1 ,,,]]
                    [:remove size1]
                    [:insert [vdom0 vdom1 ,,,]]
-                   [:take id0 size2]
+                   [:take size2 id0]
                    [:put id0]
                    ,,,]}
 
@@ -211,7 +211,7 @@
                                  [:insert [(h/hiccup [:p "xxx"])
                                            (h/hiccup [:div "yyy"])]]]})
     (apply-vdom (h/remove-in [0] 1))
-    (apply-vdom (h/update-in [0 1] (h/move 2 6 2)))
+    (apply-vdom (h/update-in [0 1] (h/move 2 2 6)))
     ;;(apply-vdom (h/remove-in [0 1 3] 3))
     ;;(apply-vdom (h/insert-in [0 1 3] (h/hiccup [:li "aaa"]) (h/hiccup [:li "bbb"])))
     ;;(apply-vdom (h/insert-in [0 2] (h/hiccup [:p "xxx"]) (h/hiccup [:div "yyy"])))

@@ -111,16 +111,16 @@
       ;; The great /dev/null operator
       {:tag nil})))
 
-(defn move [from-index to-index size]
+(defn move [from-index size to-index]
   {:children-diff (if (<= from-index to-index)
                     [[:no-op from-index]
-                     [:take 0 size]
+                     [:take size 0]
                      [:no-op (- to-index from-index size)]
                      [:put 0]]
                     [[:no-op to-index]
                      [:put 0]
                      [:no-op (- from-index to-index size)]
-                     [:take 0 size]])})
+                     [:take size 0]])})
 
 (declare comp)
 
@@ -344,7 +344,7 @@
           (insert-in [0 1 3] (hiccup [:li "aaa"]) (hiccup [:li "bbb"]))
           (insert-in [0 2] (hiccup [:p "xxx"]) (hiccup [:div "yyy"])))
 
-  (comp (move 2 4 1)
-        (move 2 4 1))
+  (comp (move 2 1 4)
+        (move 2 1 4))
 
   ,)
