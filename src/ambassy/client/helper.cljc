@@ -125,21 +125,29 @@
 (declare comp)
 
 ;; Copied from the Diffuse library
-(defn- index-op-size [[op arg]]
+(defn- index-op-size
+  "Returns the size of the operation in number of DOM elements."
+  [[op arg]]
   (if (or (= op :update)
           (= op :insert))
     (count arg)
     arg))
 
 ;; Copied from the Diffuse library
-(defn- index-op-split [[op arg] size]
+(defn- index-op-split
+  "Splits an operation into 2 pieces so that the size of the first piece is the given size,
+   and then return a vector containing those 2 pieces."
+  [[op arg] size]
   (if (or (= op :update)
           (= op :insert))
     [[op (subvec arg 0 size)] [op (subvec arg size)]]
     [[op size] [op (- arg size)]]))
 
 ;; Copied from the Diffuse library
-(defn- head-split [new-iops base-iops]
+(defn- head-split
+  "Transform 2 sequences of index operations so that their first elements
+   have the same size."
+  [new-iops base-iops]
   (let [new-iop (first new-iops)
         base-iop (first base-iops)
         new-size (index-op-size new-iop)
@@ -150,18 +158,17 @@
 
       (< new-size base-size)
       (let [[base-head base-tail] (index-op-split base-iop new-size)]
-        [new-iops (->> (rest base-iops)
-                       (cons base-tail)
-                       (cons base-head))])
+        [new-iops (list* base-head base-tail (rest base-iops))])
 
       (> new-size base-size)
       (let [[new-head new-tail] (index-op-split new-iop base-size)]
-        [(->> (rest new-iops)
-              (cons new-tail)
-              (cons new-head)) base-iops]))))
+        [(list* new-head new-tail (rest new-iops)) base-iops]))))
 
 ;; Copied from the Diffuse library
-(defn- index-ops-comp [new-iops base-iops]
+(defn- index-ops-comp
+  "Composes 2 sequences of index operations, and return the result.
+   Note: the result is not guaranteed to be canonical/normalized."
+  [new-iops base-iops]
   (loop [output []
          new-iops new-iops
          base-iops base-iops]
@@ -204,7 +211,12 @@
                                            (rest split-base-iops)))))))))
 
 ;; Copied from the Diffuse library
-(defn- index-ops-canonical [iops]
+(defn- index-ops-canonical
+  "Transform a sequence of index operations into its canonical form.
+   The goal is to regroup operations with the same type, as well as to order the
+   operations whose order can be reversed so that they are always in the same order.
+   It's a kind of normalization process."
+  [iops]
   (into []
         (cl/comp (partition-by (cl/comp {:no-op :no-op
                                          :update :update
