@@ -82,11 +82,7 @@
       (doseq [[event-type event-handler] add-listeners]
         (add-listeners dom event-type event-handler))
 
-      (let [take-id->size (into {}
-                                (keep (fn [[op-type size id]]
-                                        (when (= op-type :take)
-                                          [id size])))
-                                children-diff)
+      (let [take-id->size (h/extract-take-id->size children-diff)
             take-id->dom-nodes (-> (reduce (fn [[m index] [op arg1 arg2]]
                                              (case op
                                                (:no-op :remove) [m (+ index arg1)]

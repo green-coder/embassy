@@ -124,14 +124,21 @@
 
 (declare comp)
 
+(defn extract-take-id->size [children-diff]
+  (into {}
+        (keep (fn [[op-type size id]]
+                (when (= op-type :take)
+                  [id size])))
+        children-diff))
+
 ;; Copied from the Diffuse library
 (defn- index-op-size
   "Returns the size of the operation in number of DOM elements."
-  [[op arg]]
-  (if (or (= op :update)
-          (= op :insert))
-    (count arg)
-    arg))
+  [take-id->size [op arg1 _]]
+  (case op
+    (:no-op :remove :take) arg1
+    (:update :insert) (count arg1)
+    :put (take-id->size arg1)))
 
 ;; Copied from the Diffuse library
 (defn- index-op-split
@@ -147,11 +154,12 @@
 (defn- head-split
   "Transform 2 sequences of index operations so that their first elements
    have the same size."
-  [new-iops base-iops]
+  [new-take-id->size new-iops
+   base-take-id->size base-iops]
   (let [new-iop (first new-iops)
         base-iop (first base-iops)
-        new-size (index-op-size new-iop)
-        base-size (index-op-size base-iop)]
+        new-size (index-op-size new-take-id->size new-iop)
+        base-size (index-op-size base-take-id->size base-iop)]
     (cond
       (= new-size base-size)
       [new-iops base-iops]
@@ -164,18 +172,36 @@
       (let [[new-head new-tail] (index-op-split new-iop base-size)]
         [(list* new-head new-tail (rest new-iops)) base-iops]))))
 
+(defn- rename-ids
+  "Offsets the ids in the type-id->size hashmap and in the index operations."
+  [new-take-id->size new-iops id-offset]
+  [(into {}
+         (map (fn [[k v]]
+                [(+ k id-offset) v]))
+         new-take-id->size)
+   (into []
+         (map (fn [[op-type arg1 arg2 :as operation]]
+                (case op-type
+                  :put [:put (+ arg1 id-offset)]
+                  :take [:take arg1 (+ arg2 id-offset)]
+                  operation)))
+         new-iops)])
+
 ;; Copied from the Diffuse library
 (defn- index-ops-comp
   "Composes 2 sequences of index operations, and return the result.
-   Note: the result is not guaranteed to be canonical/normalized."
-  [new-iops base-iops]
+   Note 1: the take ids are assumed to be conflict free.
+   Note 2: the result is not guaranteed to be canonical/normalized."
+  [new-take-id->size new-iops
+   base-take-id->size base-iops]
   (loop [output []
          new-iops new-iops
          base-iops base-iops]
     (cond
       (empty? base-iops) (into output new-iops)
       (empty? new-iops) (into output base-iops)
-      :else (let [[split-new-iops split-base-iops] (head-split new-iops base-iops)
+      :else (let [[split-new-iops split-base-iops] (head-split new-take-id->size new-iops
+                                                               base-take-id->size base-iops)
                   [new-op new-arg :as new-iop] (first split-new-iops)
                   [base-op base-arg :as base-iop] (first split-base-iops)]
               (if (= new-op :insert)
@@ -209,6 +235,28 @@
                             :remove (recur output
                                            (rest split-new-iops)
                                            (rest split-base-iops)))))))))
+
+(defn- transform-orphan-takes-into-removes
+  "Returns the operations where any :take which do not have a matching :put is changed into a :remove.
+   ... also return a transformed take-id->size.
+   This function should be called before index-ops-canonical."
+  [take-id->size iops]
+  (let [orphan-take-ids (set/difference (set (keys take-id->size))
+                                        ;; all the used take-ids
+                                        (->> iops
+                                             (keep (fn [[op-type arg1]]
+                                                     (when (= op-type :put)
+                                                       arg1)))
+                                             set))
+        transformed-iops (into []
+                               (map (fn [[op-type arg1 :as operation]]
+                                      (if (and (= op-type :take)
+                                               (contains? orphan-take-ids arg1))
+                                        [:remove arg1]
+                                        operation)))
+                               iops)
+        transformed-take-id->size (apply dissoc take-id->size orphan-take-ids)]
+    [transformed-take-id->size transformed-iops]))
 
 ;; Copied from the Diffuse library
 (defn- index-ops-canonical
@@ -303,7 +351,10 @@
            add-listeners (-> add-listeners1
                              (as-> xxx (reduce dissoc xxx remove-listeners2))
                              (into add-listeners2))
-           children-diff (-> (index-ops-comp children-diff2 children-diff1)
+           take-id->size1 (extract-take-id->size children-diff1)
+           take-id->size2 (extract-take-id->size children-diff2)
+           children-diff (-> (index-ops-comp take-id->size2 children-diff2
+                                             take-id->size1 children-diff1)
                              index-ops-canonical)]
        (-> {}
            (cond->
