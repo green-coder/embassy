@@ -82,7 +82,7 @@
       (doseq [[event-type event-handler] add-listeners]
         (add-listeners dom event-type event-handler))
 
-      (let [take-id->size (h/extract-take-id->size children-diff)
+      (let [take-id->arg1 (h/extract-take-id->arg1 children-diff)
             take-id->dom-nodes (-> (reduce (fn [[m index] [op arg1 arg2]]
                                              (case op
                                                (:no-op :remove) [m (+ index arg1)]
@@ -91,7 +91,22 @@
                                                                             (-> dom-child-nodes (.item index)))
                                                                           (range index (+ index arg1))))
                                                       (+ index arg2)]
-                                               :put [m (+ index (take-id->size arg1))]))
+                                               :update-take (do
+                                                              ;; Does the update of the element
+                                                              (dotimes [i (count arg1)]
+                                                                (let [^js child-element     (-> dom-child-nodes (.item (+ index i)))
+                                                                      ^js new-child-element (apply-vdom* child-element (nth arg1 i))]
+                                                                  (-> child-element (.replaceWith new-child-element))))
+
+                                                              ;; TODO: simplify the code?
+                                                              [(assoc m arg2 (mapv (fn [index]
+                                                                                     (-> dom-child-nodes (.item index)))
+                                                                                   (range index (+ index (count arg1)))))
+                                                               (+ index arg2)])
+                                               :put [m (+ index (let [take-arg1 (take-id->arg1 arg1)]
+                                                                  (if (vector? take-arg1)
+                                                                    (count take-arg1)
+                                                                    take-arg1)))]))
                                            [{} 0]
                                            children-diff)
                                    first)]
@@ -121,8 +136,12 @@
                               (-> dom (.appendChild (create-dom child-vdom)))))
                           (recur next-operations (+ index (count arg1))))
                 :take (recur next-operations (+ index arg1))
+                :update-take (recur next-operations (+ index (count arg1)))
                 :put (let [^js node-to (-> dom-child-nodes (.item index))
-                           size (take-id->size arg1)
+                           take-arg1 (take-id->arg1 arg1)
+                           size (if (vector? take-arg1)
+                                  (count take-arg1)
+                                  take-arg1)
                            nodes-from (take-id->dom-nodes arg1)]
                        (-> node-to .-before (.apply node-to (into-array nodes-from)))
                        (recur next-operations (+ index size))))))))
@@ -175,6 +194,7 @@
                    [:remove size1]
                    [:insert [vdom0 vdom1 ,,,]]
                    [:take size2 id0]
+                   [:update-take [vdom-diff2 vdom-diff3 ,,,] id0]
                    [:put id0]
                    ,,,]}
 
@@ -207,7 +227,12 @@
                                  [:insert [(h/hiccup [:p "xxx"])
                                            (h/hiccup [:div "yyy"])]]]})
     (apply-vdom (h/remove-in [0] 1))
-    (apply-vdom (h/update-in [0 1] (h/move 2 2 6)))
+    (apply-vdom (h/update-in [0 1] {:children-diff [[:no-op 2]
+                                                    [:put 0]
+                                                    [:no-op 3]
+                                                    [:update-take [(h/insert 2 " foo")
+                                                                   (h/insert 2 " bar")] 0]]}))
+    ;;(apply-vdom (h/update-in [0 1] (h/move 2 2 6)))
     ;;(apply-vdom (h/remove-in [0 1 3] 3))
     ;;(apply-vdom (h/insert-in [0 1 3] (h/hiccup [:li "aaa"]) (h/hiccup [:li "bbb"])))
     ;;(apply-vdom (h/insert-in [0 2] (h/hiccup [:p "xxx"]) (h/hiccup [:div "yyy"])))
@@ -234,6 +259,7 @@
 ;; REPL Playground
 
 (comment
+  (u/get-in (-> js/document (.getElementById "app")) [0 0 1])
 
   (prn (-> js/document (.getElementById "app")))
   (cljs.pprint/pprint (-> js/document (.getElementById "app")))

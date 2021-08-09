@@ -131,6 +131,14 @@
                   [id size])))
         children-diff))
 
+(defn extract-take-id->arg1 [children-diff]
+  (into {}
+        (keep (fn [[op-type size-or-vdom-diffs id]]
+                (when (or (= op-type :take)
+                          (= op-type :update-take))
+                   [id size-or-vdom-diffs])))
+        children-diff))
+
 ;; Copied from the Diffuse library
 (defn- index-op-size
   "Returns the size of the operation in number of DOM elements."
