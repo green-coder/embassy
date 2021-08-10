@@ -124,12 +124,14 @@
 
 (declare comp)
 
+
 (defn extract-take-id->size [children-diff]
   (into {}
         (keep (fn [[op-type size id]]
                 (when (= op-type :take)
                   [id size])))
         children-diff))
+
 
 (defn extract-take-id->arg1 [children-diff]
   (into {}
@@ -139,24 +141,59 @@
                    [id size-or-vdom-diffs])))
         children-diff))
 
+
+(defn- take-id-arg1->size [arg1]
+  (cond-> arg1
+          (vector? arg1) count))
+
+
 ;; Copied from the Diffuse library
 (defn- index-op-size
   "Returns the size of the operation in number of DOM elements."
-  [take-id->size [op arg1 _]]
+  [take-id->arg1 [op arg1 _]]
   (case op
-    (:no-op :remove :take) arg1
-    (:update :insert) (count arg1)
-    :put (take-id->size arg1)))
+    (:no-op :remove :take)
+    arg1
+
+    (:update :insert :update-take)
+    (count arg1)
+
+    :put
+    (take-id-arg1->size (take-id->arg1 arg1))))
+
 
 ;; Copied from the Diffuse library
 (defn- index-op-split
   "Splits an operation into 2 pieces so that the size of the first piece is the given size,
    and then return a vector containing those 2 pieces."
-  [[op arg] size]
-  (if (or (= op :update)
-          (= op :insert))
-    [[op (subvec arg 0 size)] [op (subvec arg size)]]
-    [[op size] [op (- arg size)]]))
+  [take-id->arg1 [op arg1 arg2] size]
+  (case op
+    (:no-op :remove)
+    [[op size]
+     [op (- arg1 size)]]
+
+    (:update :insert)
+    [[op (subvec arg1 0 size)]
+     [op (subvec arg1 size)]]
+
+    ;; FIXME: splitting the :take implies trouble for the :put and the take-id.
+    ;; In which situations do we need to split the :take and :put ?
+    :take
+    [[op size arg2]
+     [op (- arg1 size) arg2]]
+
+    ;; FIXME: splitting the :take implies trouble for the :put and the take-id.
+    ;; In which situations do we need to split the :take and :put ?
+    :update-take
+    [[op (subvec arg1 0 size) arg2]
+     [op (subvec arg1 size) arg2]]
+
+    ;; FIXME: splitting the :take implies trouble for the :put and the take-id.
+    ;; In which situations do we need to split the :take and :put ?
+    :put
+    [[op arg1 size]
+     [op arg1 (- (take-id-arg1->size (take-id->arg1 arg1)) size)]]))
+
 
 ;; Copied from the Diffuse library
 (defn- head-split
@@ -173,11 +210,11 @@
       [new-iops base-iops]
 
       (< new-size base-size)
-      (let [[base-head base-tail] (index-op-split base-iop new-size)]
+      (let [[base-head base-tail] (index-op-split base-take-id->size base-iop new-size)]
         [new-iops (list* base-head base-tail (rest base-iops))])
 
       (> new-size base-size)
-      (let [[new-head new-tail] (index-op-split new-iop base-size)]
+      (let [[new-head new-tail] (index-op-split new-take-id->size new-iop base-size)]
         [(list* new-head new-tail (rest new-iops)) base-iops]))))
 
 (defn- rename-ids
@@ -210,16 +247,17 @@
       (empty? new-iops) (into output base-iops)
       :else (let [[split-new-iops split-base-iops] (head-split new-take-id->size new-iops
                                                                base-take-id->size base-iops)
-                  [new-op new-arg :as new-iop] (first split-new-iops)
-                  [base-op base-arg :as base-iop] (first split-base-iops)]
-              (if (= new-op :insert)
+                  [new-op new-arg new-arg2 :as new-iop] (first split-new-iops)
+                  [base-op base-arg base-arg2 :as base-iop] (first split-base-iops)]
+              (if (or (= new-op :insert)
+                      (= new-op :put))
                 (recur (conj output new-iop)
                        (rest split-new-iops)
                        split-base-iops)
                 (case base-op
-                  :remove (recur (conj output base-iop)
-                                 split-new-iops
-                                 (rest split-base-iops))
+                  (:remove :take :update-take) (recur (conj output base-iop)
+                                                      split-new-iops
+                                                      (rest split-base-iops))
                   :no-op (recur (conj output new-iop)
                                 (rest split-new-iops)
                                 (rest split-base-iops))
@@ -232,7 +270,13 @@
                                            (rest split-base-iops))
                             :remove (recur (conj output new-iop)
                                            (rest split-new-iops)
-                                           (rest split-base-iops)))
+                                           (rest split-base-iops))
+                            :take (recur (conj output [:update-take base-arg new-arg2])
+                                         (rest split-new-iops)
+                                         (rest split-base-iops))
+                            :update-take (recur (conj output [:update-take (mapv comp new-arg base-arg) new-arg2])
+                                                (rest split-new-iops)
+                                                (rest split-base-iops)))
                   :insert (case new-op
                             :no-op (recur (conj output base-iop)
                                           (rest split-new-iops)
@@ -242,7 +286,12 @@
                                            (rest split-base-iops))
                             :remove (recur output
                                            (rest split-new-iops)
-                                           (rest split-base-iops)))))))))
+                                           (rest split-base-iops))
+                            ;; FIXME: :insert then :take -> replace each :put with the insert.
+                            :take :todo
+                            :update-take :todo)
+                  :put (case new-op :todo)))))))
+
 
 (defn- transform-orphan-takes-into-removes
   "Returns the operations where any :take which do not have a matching :put is changed into a :remove.

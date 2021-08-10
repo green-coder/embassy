@@ -6,22 +6,30 @@
 
 (deftest index-op-size-test
   (is (= 3 (#'d/index-op-size {} [:no-op 3])))
-  (is (= 3 (#'d/index-op-size {} [:insert [1 2 3]])))
-  (is (= 3 (#'d/index-op-size {} [:remove 3])))
   (is (= 3 (#'d/index-op-size {} [:update [1 2 3]])))
+  (is (= 3 (#'d/index-op-size {} [:remove 3])))
+  (is (= 3 (#'d/index-op-size {} [:insert [1 2 3]])))
   (is (= 3 (#'d/index-op-size {} [:take 3 0])))
-  (is (= 3 (#'d/index-op-size {0 3} [:put 0]))))
+  (is (= 3 (#'d/index-op-size {} [:update-take [1 2 3] 0])))
+  (is (= 3 (#'d/index-op-size {0 3} [:put 0])))
+  (is (= 3 (#'d/index-op-size {0 [1 2 3]} [:put 0]))))
 
 
 (deftest index-op-split-test
   (is (= [[:no-op 2] [:no-op 1]]
-         (#'d/index-op-split [:no-op 3] 2)))
+         (#'d/index-op-split {} [:no-op 3] 2)))
   (is (= [[:update ['d 'e]] [:update ['f]]]
-         (#'d/index-op-split [:update ['d 'e 'f]] 2)))
+         (#'d/index-op-split {} [:update ['d 'e 'f]] 2)))
   (is (= [[:remove 2] [:remove 1]]
-         (#'d/index-op-split [:remove 3] 2)))
+         (#'d/index-op-split {} [:remove 3] 2)))
   (is (= [[:insert ['x 'y]] [:insert ['z]]]
-         (#'d/index-op-split [:insert ['x 'y 'z]] 2))))
+         (#'d/index-op-split {} [:insert ['x 'y 'z]] 2)))
+  (is (= [[:take 2 'id] [:take 1 'id]]
+         (#'d/index-op-split {} [:take 3 'id] 2)))
+  (is (= [[:update-take ['x 'y] 'id] [:update-take ['z] 'id]]
+         (#'d/index-op-split {} [:update-take ['x 'y 'z] 'id] 2)))
+  (is (= [[:put 0 2] [:put 0 1]]
+         (#'d/index-op-split {0 3} [:put 0] 2))))
 
 
 (deftest head-split-test
