@@ -125,32 +125,24 @@
 (declare comp)
 
 
-(defn extract-take-id->size [children-diff]
-  (into {}
-        (keep (fn [[op-type size id]]
-                (when (= op-type :take)
-                  [id size])))
-        children-diff))
-
-
-(defn extract-take-id->arg1 [children-diff]
+(defn- extract-take-id->state [children-diff]
   (into {}
         (keep (fn [[op-type size-or-vdom-diffs id]]
                 (when (or (= op-type :take)
                           (= op-type :update-take))
-                   [id size-or-vdom-diffs])))
+                   [id (-> {:take-index 0
+                            :put-index 0}
+                           (assoc (if (vector? size-or-vdom-diffs)
+                                    :updates
+                                    :size)
+                                  size-or-vdom-diffs))])))
         children-diff))
-
-
-(defn- take-id-arg1->size [arg1]
-  (cond-> arg1
-          (vector? arg1) count))
 
 
 ;; Copied from the Diffuse library
 (defn- index-op-size
   "Returns the size of the operation in number of DOM elements."
-  [take-id->arg1 [op arg1 _]]
+  [take-id->state [op arg1 _]]
   (case op
     (:no-op :remove :take)
     arg1
@@ -159,14 +151,16 @@
     (count arg1)
 
     :put
-    (take-id-arg1->size (take-id->arg1 arg1))))
+    (let [take-state (take-id->state arg1)]
+      (or (:size take-state)
+          (count (:updates take-state))))))
 
 
 ;; Copied from the Diffuse library
 (defn- index-op-split
   "Splits an operation into 2 pieces so that the size of the first piece is the given size,
    and then return a vector containing those 2 pieces."
-  [take-id->arg1 [op arg1 arg2] size]
+  [take-id->state [op arg1 arg2] size]
   (case op
     (:no-op :remove)
     [[op size]
@@ -192,105 +186,229 @@
     ;; In which situations do we need to split the :take and :put ?
     :put
     [[op arg1 size]
-     [op arg1 (- (take-id-arg1->size (take-id->arg1 arg1)) size)]]))
+     [op arg1 (- (let [take-state (take-id->state arg1)]
+                   (or (:size take-state)
+                       (count (:updates take-state))))
+                 size)]]))
 
 
 ;; Copied from the Diffuse library
 (defn- head-split
   "Transform 2 sequences of index operations so that their first elements
    have the same size."
-  [new-take-id->size new-iops
-   base-take-id->size base-iops]
+  [new-take-id->state new-iops
+   base-take-id->state base-iops]
   (let [new-iop (first new-iops)
         base-iop (first base-iops)
-        new-size (index-op-size new-take-id->size new-iop)
-        base-size (index-op-size base-take-id->size base-iop)]
+        new-size (index-op-size new-take-id->state new-iop)
+        base-size (index-op-size base-take-id->state base-iop)]
     (cond
       (= new-size base-size)
-      [new-iops base-iops]
+      [base-size new-iops base-iops]
 
       (< new-size base-size)
-      (let [[base-head base-tail] (index-op-split base-take-id->size base-iop new-size)]
-        [new-iops (list* base-head base-tail (rest base-iops))])
+      (let [[base-head base-tail] (index-op-split base-take-id->state base-iop new-size)]
+        [new-size new-iops (list* base-head base-tail (rest base-iops))])
 
       (> new-size base-size)
-      (let [[new-head new-tail] (index-op-split new-take-id->size new-iop base-size)]
-        [(list* new-head new-tail (rest new-iops)) base-iops]))))
+      (let [[new-head new-tail] (index-op-split new-take-id->state new-iop base-size)]
+        [base-size (list* new-head new-tail (rest new-iops)) base-iops]))))
 
-(defn- rename-ids
-  "Offsets the ids in the type-id->size hashmap and in the index operations."
-  [new-take-id->size new-iops id-offset]
-  [(into {}
-         (map (fn [[k v]]
-                [(+ k id-offset) v]))
-         new-take-id->size)
-   (into []
-         (map (fn [[op-type arg1 arg2 :as operation]]
-                (case op-type
-                  :put [:put (+ arg1 id-offset)]
-                  :take [:take arg1 (+ arg2 id-offset)]
-                  operation)))
-         new-iops)])
+(defn- replace-subvec
+  "Returns a vector with a sub-section at position `index` replaced by the vector `sv`."
+  [v index sv]
+  (reduce (fn [v [index element]]
+            (assoc v index element))
+          v
+          (mapv vector (range index (+ index (count sv))) sv)))
+
+#_(replace-subvec [:a :b :c] 1 [:x])
+#_(replace-subvec [:a :b :c] 3 [:x :y :z])
+
+(defn- ensure-take-state-has-updates [state]
+  (cond-> state
+    (not (contains? state :updates))
+    (assoc :updates (vec (repeat (:size state) nil)))))
+
+#_(ensure-take-state-has-updates {:size 3})
 
 ;; Copied from the Diffuse library
 (defn- index-ops-comp
   "Composes 2 sequences of index operations, and return the result.
-   Note 1: the take ids are assumed to be conflict free.
    Note 2: the result is not guaranteed to be canonical/normalized."
-  [new-take-id->size new-iops
-   base-take-id->size base-iops]
-  (loop [output []
-         new-iops new-iops
-         base-iops base-iops]
-    (cond
-      (empty? base-iops) (into output new-iops)
-      (empty? new-iops) (into output base-iops)
-      :else (let [[split-new-iops split-base-iops] (head-split new-take-id->size new-iops
-                                                               base-take-id->size base-iops)
-                  [new-op new-arg new-arg2 :as new-iop] (first split-new-iops)
-                  [base-op base-arg base-arg2 :as base-iop] (first split-base-iops)]
-              (if (or (= new-op :insert)
-                      (= new-op :put))
-                (recur (conj output new-iop)
-                       (rest split-new-iops)
-                       split-base-iops)
-                (case base-op
-                  (:remove :take :update-take) (recur (conj output base-iop)
-                                                      split-new-iops
-                                                      (rest split-base-iops))
-                  :no-op (recur (conj output new-iop)
-                                (rest split-new-iops)
-                                (rest split-base-iops))
-                  :update (case new-op
-                            :no-op (recur (conj output base-iop)
-                                          (rest split-new-iops)
-                                          (rest split-base-iops))
-                            :update (recur (conj output [:update (mapv comp new-arg base-arg)])
+  [new-take-id->state new-iops
+   base-take-id->state base-iops]
+  (let [take-id-offset (count base-take-id->state)]
+    (loop [output-take-id->state (into base-take-id->state
+                                       (map (fn [[take-id state]]
+                                              [(+ take-id take-id-offset) state]))
+                                       new-take-id->state)
+           output []
+           new-iops new-iops
+           base-iops base-iops]
+      (cond
+        (empty? base-iops) [output-take-id->state (into output new-iops)]
+        (empty? new-iops) [output-take-id->state (into output base-iops)]
+        :else (let [[op-size split-new-iops split-base-iops] (head-split new-take-id->state new-iops
+                                                                         base-take-id->state base-iops)
+                    [new-op new-arg1 new-arg2 :as new-iop] (first split-new-iops)
+                    [base-op base-arg1 base-arg2 :as base-iop] (first split-base-iops)]
+                (if (or (= new-op :insert)
+                        (= new-op :put))
+                  (recur output-take-id->state
+                         (conj output new-iop)
+                         (rest split-new-iops)
+                         split-base-iops)
+                  (case base-op
+                    :remove (recur output-take-id->state
+                                   (conj output base-iop)
+                                   split-new-iops
+                                   (rest split-base-iops))
+                    :take (recur (update-in output-take-id->state
+                                            [base-arg2 :take-index]
+                                            + base-arg1)
+                                 (conj output base-iop)
+                                 split-new-iops
+                                 (rest split-base-iops))
+                    :update-take (recur (update-in output-take-id->state
+                                                   [base-arg2 :take-index]
+                                                   + op-size)
+                                        (conj output [:take op-size base-arg2])
+                                        split-new-iops
+                                        (rest split-base-iops))
+                    :no-op (recur output-take-id->state
+                                  (conj output (if (= new-op :update-take)
+                                                 [:take op-size (+ new-arg2 take-id-offset)]
+                                                 new-iop))
+                                  (rest split-new-iops)
+                                  (rest split-base-iops))
+                    :update (case new-op
+                              :no-op (recur output-take-id->state
+                                            (conj output base-iop)
+                                            (rest split-new-iops)
+                                            (rest split-base-iops))
+                              :update (recur output-take-id->state
+                                             (conj output [:update (mapv comp new-arg1 base-arg1)])
+                                             (rest split-new-iops)
+                                             (rest split-base-iops))
+                              :remove (recur output-take-id->state
+                                             (conj output new-iop)
+                                             (rest split-new-iops)
+                                             (rest split-base-iops))
+                              :take (recur (update output-take-id->state
+                                                   (+ new-arg2 take-id-offset)
+                                                   (fn [{:keys [take-index] :as state}]
+                                                     (-> state
+                                                         (update :take-index + op-size)
+                                                         ensure-take-state-has-updates
+                                                         (update :updates replace-subvec take-index base-arg1))))
+                                           (conj output new-iops)
                                            (rest split-new-iops)
                                            (rest split-base-iops))
-                            :remove (recur (conj output new-iop)
+                              :update-take (recur (update output-take-id->state
+                                                          (+ new-arg2 take-id-offset)
+                                                          (fn [{:keys [take-index] :as state}]
+                                                            (-> state
+                                                                (update :take-index + op-size)
+                                                                (update :updates replace-subvec take-index (mapv comp new-arg1 base-arg1)))))
+                                                  (conj output [:take op-size (+ new-arg2 take-id-offset)])
+                                                  (rest split-new-iops)
+                                                  (rest split-base-iops)))
+                    :insert (case new-op
+                              :no-op (recur output-take-id->state
+                                            (conj output base-iop)
+                                            (rest split-new-iops)
+                                            (rest split-base-iops))
+                              :update (recur output-take-id->state
+                                             (conj output [:insert (mapv comp new-arg1 base-arg1)])
+                                             (rest split-new-iops)
+                                             (rest split-base-iops))
+                              :remove (recur output-take-id->state
+                                             output
+                                             (rest split-new-iops)
+                                             (rest split-base-iops))
+                              ;; FIXME: :insert then :take -> replace each :put with the insert.
+                              ;; PROBLEM: we ommit :take from the output, how will we know that the :put
+                              ;;          should be turned into an :insert ?
+                              :take (recur (update output-take-id->state
+                                                   (+ new-arg2 take-id-offset)
+                                                   (fn [{:keys [take-index] :as state}]
+                                                     (-> state
+                                                         (update :take-index + op-size)
+                                                         ;; FIXME: correct it to become an :insert
+                                                         #_#_
+                                                         ensure-take-state-has-updates
+                                                         (update :updates replace-subvec take-index base-arg1))))
+                                           output
                                            (rest split-new-iops)
                                            (rest split-base-iops))
-                            :take (recur (conj output [:update-take base-arg new-arg2])
+                              ;; Moved updated insert
+                              :update-take (recur (update output-take-id->state
+                                                          (+ new-arg2 take-id-offset)
+                                                          (fn [{:keys [take-index] :as state}]
+                                                            (-> state
+                                                                (update :take-index + op-size)
+                                                                ;; FIXME: correct it to become an :insert
+                                                                #_#_
+                                                                ensure-take-state-has-updates
+                                                                (update :updates replace-subvec take-index (mapv comp new-arg1 base-arg1)))))
+                                                  output
+                                                  (rest split-new-iops)
+                                                  (rest split-base-iops)))
+                    ;; TODO: ... finish this part
+                    :put (case new-op
+                           :no-op (recur output-take-id->state
+                                         (conj output base-iop)
                                          (rest split-new-iops)
                                          (rest split-base-iops))
-                            :update-take (recur (conj output [:update-take (mapv comp new-arg base-arg) new-arg2])
-                                                (rest split-new-iops)
-                                                (rest split-base-iops)))
-                  :insert (case new-op
-                            :no-op (recur (conj output base-iop)
+                           ;; TODO: apply the update on the source of the :take
+                           :update (recur (update output-take-id->state
+                                                  base-arg1
+                                                  (fn [{:keys [put-index] :as state}]
+                                                    (-> state
+                                                        (update :put-index + op-size)
+                                                        ensure-take-state-has-updates
+                                                        (update :updates (fn [updates]
+                                                                           (replace-subvec updates
+                                                                                           put-index
+                                                                                           ;; FIXME: incorrect - go to sleep !
+                                                                                           (mapv comp new-arg1 base-arg1)))))))
+                                          ;;(conj output [:insert (mapv comp new-arg1 base-arg1)])
+                                          (conj output base-iop)
                                           (rest split-new-iops)
                                           (rest split-base-iops))
-                            :update (recur (conj output [:insert (mapv comp new-arg base-arg)])
-                                           (rest split-new-iops)
-                                           (rest split-base-iops))
-                            :remove (recur output
-                                           (rest split-new-iops)
-                                           (rest split-base-iops))
-                            ;; FIXME: :insert then :take -> replace each :put with the insert.
-                            :take :todo
-                            :update-take :todo)
-                  :put (case new-op :todo)))))))
+                           ;; TODO: remove the :take and the :put, insert the :remove in the output.
+                           :remove (recur output-take-id->state
+                                          output
+                                          (rest split-new-iops)
+                                          (rest split-base-iops))
+                           ;; TODO: remove the base :put and the new :take, make the new put use the base's take-id.
+                           :take (recur (update output-take-id->state
+                                                (+ new-arg2 take-id-offset)
+                                                (fn [{:keys [take-index] :as state}]
+                                                  (-> state
+                                                      (update :take-index + op-size)
+                                                      ;; FIXME: correct it to become an :insert
+                                                      #_#_
+                                                      ensure-take-state-has-updates
+                                                      (update :updates replace-subvec take-index base-arg1))))
+                                        output
+                                        (rest split-new-iops)
+                                        (rest split-base-iops))
+                           ;; TODO: update the base :take, remove the base :put and the new :update-take, make new put use the base's take-id.
+                           ;; Moved updated insert
+                           :update-take (recur (update output-take-id->state
+                                                       (+ new-arg2 take-id-offset)
+                                                       (fn [{:keys [take-index] :as state}]
+                                                         (-> state
+                                                             (update :take-index + op-size)
+                                                             ;; FIXME: correct it to become an :insert
+                                                             #_#_
+                                                             ensure-take-state-has-updates
+                                                             (update :updates replace-subvec take-index (mapv comp new-arg1 base-arg1)))))
+                                               output
+                                               (rest split-new-iops)
+                                               (rest split-base-iops))))))))))
 
 
 (defn- transform-orphan-takes-into-removes
@@ -408,10 +526,11 @@
            add-listeners (-> add-listeners1
                              (as-> xxx (reduce dissoc xxx remove-listeners2))
                              (into add-listeners2))
-           take-id->size1 (extract-take-id->size children-diff1)
-           take-id->size2 (extract-take-id->size children-diff2)
-           children-diff (-> (index-ops-comp take-id->size2 children-diff2
-                                             take-id->size1 children-diff1)
+           take-id->state1 (extract-take-id->state children-diff1)
+           take-id->state2 (extract-take-id->state children-diff2)
+           children-diff (-> (index-ops-comp take-id->state2 children-diff2
+                                             take-id->state1 children-diff1)
+                             second ;; <- TMP
                              index-ops-canonical)]
        (-> {}
            (cond->

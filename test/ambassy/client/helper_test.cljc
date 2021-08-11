@@ -11,8 +11,8 @@
   (is (= 3 (#'d/index-op-size {} [:insert [1 2 3]])))
   (is (= 3 (#'d/index-op-size {} [:take 3 0])))
   (is (= 3 (#'d/index-op-size {} [:update-take [1 2 3] 0])))
-  (is (= 3 (#'d/index-op-size {0 3} [:put 0])))
-  (is (= 3 (#'d/index-op-size {0 [1 2 3]} [:put 0]))))
+  (is (= 3 (#'d/index-op-size {0 {:size 3}} [:put 0])))
+  (is (= 3 (#'d/index-op-size {0 {:updates [1 2 3]}} [:put 0]))))
 
 
 (deftest index-op-split-test
@@ -29,23 +29,26 @@
   (is (= [[:update-take ['x 'y] 'id] [:update-take ['z] 'id]]
          (#'d/index-op-split {} [:update-take ['x 'y 'z] 'id] 2)))
   (is (= [[:put 0 2] [:put 0 1]]
-         (#'d/index-op-split {0 3} [:put 0] 2))))
+         (#'d/index-op-split {0 {:size 3}} [:put 0] 2))))
 
 
 (deftest head-split-test
-  (is (= [[[:remove 2] [:remove 1] [:no-op 2]]
+  (is (= [2
+          [[:remove 2] [:remove 1] [:no-op 2]]
           [[:no-op 2] [:remove 3]]]
          (#'d/head-split {}
                          [[:remove 3] [:no-op 2]]
                          {}
                          [[:no-op 2] [:remove 3]])))
-  (is (= [[[:remove 2] [:no-op 2]]
+  (is (= [2
+          [[:remove 2] [:no-op 2]]
           [[:no-op 2] [:no-op 1] [:remove 3]]]
          (#'d/head-split {}
                          [[:remove 2] [:no-op 2]]
                          {}
                          [[:no-op 3] [:remove 3]])))
-  (is (= [[[:remove 2] [:no-op 2]]
+  (is (= [2
+          [[:remove 2] [:no-op 2]]
           [[:no-op 2] [:remove 3]]]
          (#'d/head-split {}
                          [[:remove 2] [:no-op 2]]
@@ -58,8 +61,9 @@
         base-take-id->size base-iops
         expected-result]
     (= expected-result
-       (#'d/index-ops-comp new-take-id->size new-iops
-                           base-take-id->size base-iops))
+       (-> (#'d/index-ops-comp new-take-id->size new-iops
+                               base-take-id->size base-iops)
+           second))
 
     {}
     [[:no-op 2] [:insert [1 2 3]]]

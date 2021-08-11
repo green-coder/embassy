@@ -53,6 +53,14 @@
       ;; Return the node
       node)))
 
+(defn- extract-take-id->arg1 [children-diff]
+  (into {}
+        (keep (fn [[op-type size-or-vdom-diffs id]]
+                (when (or (= op-type :take)
+                          (= op-type :update-take))
+                  [id size-or-vdom-diffs])))
+        children-diff))
+
 ;; The parent is responsible for replacing the previous dom node
 ;; by the new one if they are different nodes.
 (defn- apply-vdom* [^js dom vdom]
