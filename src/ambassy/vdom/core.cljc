@@ -1,126 +1,223 @@
-(ns ambassy.client.helper
-  (:refer-clojure :exclude [update remove update-in comp])
+(ns ambassy.vdom.core
+  (:refer-clojure :exclude [comp])
   (:require
-    [clojure.core :as cl]
+    [clojure.core :as cc]
     [clojure.set :as set]
-    [clojure.string :as str]
-    [camel-snake-kebab.core :as csk]))
+    [ambassy.client.util :as u]))
 
-(defn hiccup [x]
-  (cond
-    (vector? x)
-    (let [[props & children] (if (map? (second x))
-                               (rest x)
-                               (cons nil (rest x)))
-          expended-children (into []
-                                  (mapcat (fn [child]
-                                            (cond
-                                              (seq? child) child
-                                              (nil? child) []
-                                              :else [child])))
-                                  children)
-          attrs (into {}
-                      (keep (fn [[k v]]
-                              (let [k-str (-> k name csk/->camelCase str/lower-case)]
-                                (when-not (str/starts-with? k-str "on")
-                                  [k-str
-                                   (cond
-                                     (vector? v) (->> v
-                                                      (mapv name)
-                                                      (str/join " "))
-                                     (map? v) (->> v
-                                                   (map (fn [[k v]]
-                                                          (str (name k) ": " (name v) ";")))
-                                                   (apply str))
-                                     :else (name v))]))))
-                      props)
-          listeners (into {}
-                          (keep (fn [[k v]]
-                                  (let [k-str (-> k name csk/->camelCase str/lower-case)]
-                                    (when (str/starts-with? k-str "on")
-                                      [(subs k-str 2) v]))))
-                          props)]
-      (cond-> {:tag (name (first x))}
-              (seq attrs) (assoc :attrs attrs)
-              (seq listeners) (assoc :listeners listeners)
-              (seq expended-children) (assoc :children (mapv hiccup expended-children))))
+;; Things to do:
+;; [x] Add support for the on-xxx.
+;; [x] Add helper functions to write the vdom-diff structures.
+;; [x] Add functions to compose vdom-diff together.
+;; [ ] Implement the move of the children.
+;;     Make sure it is easy enough to combine multiple vdom-diffs together.
+;; [x] Test apply-vdom using vdom-diff.
+;; [ ] The app-element should be able to have multiple children.
+;; [ ] Review API structure: Do we still need an empty text node by default?
+;; [ ] Check how Phoenix Live View deals with controlled text inputs, w.r.t. async and lag.
 
-    (keyword? x)
-    (name x)
 
-    (nil? x)
-    x
+(comment
+  ;; When we want to clear everything on the page, the root element should be the empty string.
+  ;;
+  ;; A vdom-diff (a.k.a. "vdom", which is shorter) structure can be either:
+  ;; - a string: replaces existing node with a text node.
+  ;; - a hashmap containing :tag, and optionally :attrs, :listeners and :children.
+  ;; - a hashmap without :tag, and optionally :remove-attrs, :add-attrs,
+  ;;   :remove-listeners, :add-listeners, :children-diff and :children-moves.
 
-    :else
-    (str x)))
+  ;; Examples:
 
-#_
-(hiccup->vdom [:main
-               [:h1 {:title "foobar"
-                     :class [:c1 :c2]} "hello, " "world " nil 42]
-               [:p {:class :foobar
-                    :style {:color :red}} "This is a paragraph."]
-               [:button {:on-click (fn [event] (js/console.log event))} "Click me"]])
+  ;; When it is a string
+  "Hello, world"
 
-(defn- skip-n-elements [children-diff n-elements]
-  (cond-> children-diff
-    (> n-elements 0)
-    (conj [:no-op n-elements])))
+  ;; When it contains :tag
+  {:tag "div"
+   :attrs {"xxx" "value"}
+   :listeners {"click" (fn [event] ,,,)}
+   :children [vdom0 vdom1 ,,,]}
 
-(defn update [index vdom & more-vdoms]
-  {:children-diff (-> []
-                      (skip-n-elements index)
-                      (conj [:update (into [vdom] more-vdoms)]))})
+  ;; When it does not contain :tag
+  {;; The keys in :remove-attrs and :add-attrs should be mutually exclusive.
+   :remove-attrs #{"yyy"}
+   :add-attrs {"xxx" "new-value"}
 
-(defn insert [index vdom & more-vdoms]
-  {:children-diff (-> []
-                      (skip-n-elements index)
-                      (conj [:insert (into [vdom] more-vdoms)]))})
+   ;; The keys are not necessarily mutually exclusive,
+   ;; previous listeners have to be removed explicitly before new ones are added.
+   :remove-listeners #{"focus"}
+   :add-listeners {"click" (fn [event] ,,,)}
 
-(defn remove [index size]
-  {:children-diff (-> []
-                      (skip-n-elements index)
-                      (conj [:remove size]))})
+   ;; Re-use the vector format (index-op) from Diffuse.
+   :children-diff [[:no-op size0]
+                   [:update [vdom-diff0 vdom-diff1 ,,,]]
+                   [:remove size1]
+                   [:insert [vdom0 vdom1 ,,,]]
+                   [:take size2 id0]
+                   [:update-take [vdom-diff2 vdom-diff3 ,,,] id0]
+                   [:put id0]
+                   ,,,]}
 
-(defn update-in [path vdom & more-vdoms]
-  (if (seq path)
-    (let [[last-path & reversed-path] (reverse path)]
-      (reduce (fn [vdom index]
-                (update index vdom))
-              (apply update last-path vdom more-vdoms)
-              reversed-path))
-    ;; Act like the identity function
-    vdom))
+  ,)
 
-(defn insert-in [path vdom & more-vdoms]
-  (if (seq path)
-    (let [last-path (last path)
-          butlast-path (butlast path)]
-      (update-in butlast-path (apply insert last-path vdom more-vdoms)))
-    ;; Replace anything with the given vdom value
-    vdom))
 
-(defn remove-in [path size]
-  (if (seq path)
-    (let [last-path (last path)
-          butlast-path (butlast path)]
-      (update-in butlast-path (remove last-path size)))
-    (if (zero? size)
-      ;; The absence of change
-      nil
-      ;; The great /dev/null operator
-      {:tag nil})))
+#?(:cljs
+   (defn- add-event-listener [^js element event-type event-handler]
+     (let [listeners (or (-> element .-event-listeners) {})]
+       (set! (-> element .-event-listeners)
+             (update listeners event-type (fnil conj #{}) event-handler))
+       (-> element (.addEventListener event-type event-handler)))))
 
-(defn move [from-index size to-index]
-  {:children-diff (if (<= from-index to-index)
-                    [[:no-op from-index]
-                     [:take size 0]
-                     [:no-op (- to-index from-index size)]
-                     [:put 0]]
-                    [[:no-op to-index]
-                     [:put 0]
-                     [:no-op (- from-index to-index size)]
-                     [:take size 0]])})
+#?(:cljs
+   (defn- remove-event-listeners [^js element event-type]
+     (let [listeners (or (-> element .-event-listeners) {})]
+       (doseq [event-handler (get listeners event-type)]
+         (-> element (.removeEventListener event-type event-handler)))
+       (set! (-> element .-event-listeners)
+             (dissoc listeners event-type)))))
+
+#?(:cljs
+   (defn- create-dom [vdom]
+     (if (string? vdom)
+       ;; Text node
+       (-> js/document (.createTextNode vdom))
+
+       ;; Non-text node
+       (let [{:keys [tag attrs listeners children]} vdom
+             node (-> js/document (.createElement tag))]
+         ;; Set the attributes
+         (doseq [[k v] attrs]
+           (-> node (.setAttribute k v)))
+
+         ;; Set the listeners
+         (doseq [[event-type event-handler] listeners]
+           (add-event-listener node event-type event-handler))
+
+         ;; Set the children
+         (doseq [child children]
+           (-> node (.appendChild (create-dom child))))
+
+         ;; Return the node
+         node))))
+
+#?(:cljs
+   (defn- extract-take-id->arg1 [children-diff]
+     (into {}
+           (keep (fn [[op-type size-or-vdom-diffs id]]
+                   (when (or (= op-type :take)
+                             (= op-type :update-take))
+                     [id size-or-vdom-diffs])))
+           children-diff)))
+
+#?(:cljs
+   ;; The parent is responsible for replacing the previous dom node
+   ;; by the new one if they are different nodes.
+   (defn- apply-vdom* [^js dom vdom]
+     (cond
+       (nil? vdom)
+       dom
+
+       (or (string? vdom)
+           (contains? vdom :tag))
+       (create-dom vdom)
+
+       :else
+       (let [^js dom-child-nodes (-> dom .-childNodes)
+             {:keys [remove-attrs add-attrs
+                     remove-listeners add-listeners
+                     children-diff]} vdom]
+
+         (doseq [attr remove-attrs]
+           (-> dom (.removeAttribute attr)))
+
+         (doseq [[k v] add-attrs]
+           (-> dom (.setAttribute k v)))
+
+         (doseq [event-type remove-listeners]
+           (remove-event-listeners dom event-type))
+
+         (doseq [[event-type event-handler] add-listeners]
+           (add-listeners dom event-type event-handler))
+
+         (let [take-id->arg1 (extract-take-id->arg1 children-diff)
+               take-id->dom-nodes (-> (reduce (fn [[m index] [op arg1 arg2]]
+                                                (case op
+                                                  (:no-op :remove) [m (+ index arg1)]
+                                                  (:update :insert) [m (+ index (count arg1))]
+                                                  :take [(assoc m arg2 (mapv (fn [index]
+                                                                               (-> dom-child-nodes (.item index)))
+                                                                             (range index (+ index arg1))))
+                                                         (+ index arg2)]
+                                                  :update-take (do
+                                                                 ;; Does the update of the element
+                                                                 (dotimes [i (count arg1)]
+                                                                   (let [^js child-element     (-> dom-child-nodes (.item (+ index i)))
+                                                                         ^js new-child-element (apply-vdom* child-element (nth arg1 i))]
+                                                                     (-> child-element (.replaceWith new-child-element))))
+
+                                                                 ;; TODO: simplify the code?
+                                                                 [(assoc m arg2 (mapv (fn [index]
+                                                                                        (-> dom-child-nodes (.item index)))
+                                                                                      (range index (+ index (count arg1)))))
+                                                                  (+ index arg2)])
+                                                  :put [m (+ index (let [take-arg1 (take-id->arg1 arg1)]
+                                                                     (if (vector? take-arg1)
+                                                                       (count take-arg1)
+                                                                       take-arg1)))]))
+                                              [{} 0]
+                                              children-diff)
+                                      first)]
+           (loop [operations (seq children-diff)
+                  index 0]
+             (when operations
+               (let [[op arg1 arg2] (first operations)
+                     next-operations (next operations)]
+                 (case op
+                   :no-op (recur next-operations (+ index arg1))
+                   :update (do
+                             (dotimes [i (count arg1)]
+                               (let [^js child-element     (-> dom-child-nodes (.item (+ index i)))
+                                     ^js new-child-element (apply-vdom* child-element (nth arg1 i))]
+                                 (-> child-element (.replaceWith new-child-element))))
+                             (recur next-operations (+ index (count arg1))))
+                   :remove (do
+                             (dotimes [_ arg1]
+                               (-> dom (.removeChild (-> dom-child-nodes (.item index)))))
+                             (recur next-operations index))
+                   :insert (do
+                             (if (< index (-> dom-child-nodes .-length))
+                               (let [node-after (-> dom-child-nodes (.item index))]
+                                 (doseq [child-vdom arg1]
+                                   (-> dom (.insertBefore (create-dom child-vdom) node-after))))
+                               (doseq [child-vdom arg1]
+                                 (-> dom (.appendChild (create-dom child-vdom)))))
+                             (recur next-operations (+ index (count arg1))))
+                   :take (recur next-operations (+ index arg1))
+                   :update-take (recur next-operations (+ index (count arg1)))
+                   :put (let [^js node-to (-> dom-child-nodes (.item index))
+                              take-arg1 (take-id->arg1 arg1)
+                              size (if (vector? take-arg1)
+                                     (count take-arg1)
+                                     take-arg1)
+                              nodes-from (take-id->dom-nodes arg1)]
+                          (-> node-to .-before (.apply node-to (into-array nodes-from)))
+                          (recur next-operations (+ index size))))))))
+
+         dom))))
+
+#?(:cljs
+   (defn apply-vdom [^js app-element vdom]
+     ;; Ensures that we have a "root" node under app-element.
+     (when (zero? (-> app-element .-childNodes .-length))
+       (-> app-element (.appendChild (create-dom ""))))
+
+     ;; Apply the vdom
+     (let [current-dom-root (-> app-element .-firstChild)
+           new-dom-root (apply-vdom* current-dom-root vdom)]
+       (-> current-dom-root (.replaceWith new-dom-root)))))
+
+
+
+;; ****************************************************************
 
 (declare comp)
 
@@ -214,17 +311,6 @@
       (let [[new-head new-tail] (index-op-split new-take-id->state new-iop base-size)]
         [base-size (list* new-head new-tail (rest new-iops)) base-iops]))))
 
-(defn- replace-subvec
-  "Returns a vector with a sub-section at position `index` replaced by the vector `sv`."
-  [v index sv]
-  (reduce (fn [v [index element]]
-            (assoc v index element))
-          v
-          (mapv vector (range index (+ index (count sv))) sv)))
-
-#_(replace-subvec [:a :b :c] 1 [:x])
-#_(replace-subvec [:a :b :c] 3 [:x :y :z])
-
 (defn- ensure-take-state-has-updates [state]
   (cond-> state
     (not (contains? state :updates))
@@ -301,7 +387,7 @@
                                                      (-> state
                                                          (update :take-index + op-size)
                                                          ensure-take-state-has-updates
-                                                         (update :updates replace-subvec take-index base-arg1))))
+                                                         (update :updates u/replace-subvec take-index base-arg1))))
                                            (conj output new-iops)
                                            (rest split-new-iops)
                                            (rest split-base-iops))
@@ -310,7 +396,7 @@
                                                           (fn [{:keys [take-index] :as state}]
                                                             (-> state
                                                                 (update :take-index + op-size)
-                                                                (update :updates replace-subvec take-index (mapv comp new-arg1 base-arg1)))))
+                                                                (update :updates u/replace-subvec take-index (mapv comp new-arg1 base-arg1)))))
                                                   (conj output [:take op-size (+ new-arg2 take-id-offset)])
                                                   (rest split-new-iops)
                                                   (rest split-base-iops)))
@@ -338,7 +424,7 @@
                                                          ;; FIXME: correct it to become an :insert
                                                          #_#_
                                                          ensure-take-state-has-updates
-                                                         (update :updates replace-subvec take-index base-arg1))))
+                                                         (update :updates u/replace-subvec take-index base-arg1))))
                                            output
                                            (rest split-new-iops)
                                            (rest split-base-iops))
@@ -351,7 +437,7 @@
                                                                 ;; FIXME: correct it to become an :insert
                                                                 #_#_
                                                                 ensure-take-state-has-updates
-                                                                (update :updates replace-subvec take-index (mapv comp new-arg1 base-arg1)))))
+                                                                (update :updates u/replace-subvec take-index (mapv comp new-arg1 base-arg1)))))
                                                   output
                                                   (rest split-new-iops)
                                                   (rest split-base-iops)))
@@ -369,10 +455,10 @@
                                                         (update :put-index + op-size)
                                                         ensure-take-state-has-updates
                                                         (update :updates (fn [updates]
-                                                                           (replace-subvec updates
-                                                                                           put-index
-                                                                                           ;; FIXME: incorrect - go to sleep !
-                                                                                           (mapv comp new-arg1 base-arg1)))))))
+                                                                           (u/replace-subvec updates
+                                                                                             put-index
+                                                                                             ;; FIXME: incorrect - go to sleep !
+                                                                                             (mapv comp new-arg1 base-arg1)))))))
                                           ;;(conj output [:insert (mapv comp new-arg1 base-arg1)])
                                           (conj output base-iop)
                                           (rest split-new-iops)
@@ -391,7 +477,7 @@
                                                       ;; FIXME: correct it to become an :insert
                                                       #_#_
                                                       ensure-take-state-has-updates
-                                                      (update :updates replace-subvec take-index base-arg1))))
+                                                      (update :updates u/replace-subvec take-index base-arg1))))
                                         output
                                         (rest split-new-iops)
                                         (rest split-base-iops))
@@ -405,7 +491,7 @@
                                                              ;; FIXME: correct it to become an :insert
                                                              #_#_
                                                              ensure-take-state-has-updates
-                                                             (update :updates replace-subvec take-index (mapv comp new-arg1 base-arg1)))))
+                                                             (update :updates u/replace-subvec take-index (mapv comp new-arg1 base-arg1)))))
                                                output
                                                (rest split-new-iops)
                                                (rest split-base-iops))))))))))
@@ -441,7 +527,7 @@
    It's a kind of normalization process."
   [iops]
   (into []
-        (cl/comp (partition-by (cl/comp {:no-op :no-op
+        (cc/comp (partition-by (cc/comp {:no-op :no-op
                                          :update :update
                                          :remove :remsert
                                          :insert :remsert} first))
@@ -546,32 +632,21 @@
 (defn comp-> [& vdoms]
   (apply comp (reverse vdoms)))
 
-(defn comp-in-> [path & vdoms]
-  (update-in path (apply comp-> vdoms)))
-
-(defn comp-in [path & vdoms]
-  (update-in path (apply comp vdoms)))
 
 (comment
+  (comp-> (h/insert 2 (h/hiccup "xxx"))
+          (h/insert 4 (h/hiccup "yyy")))
 
-  (update 5 (hiccup "xxx"))
-  (update-in [9 5] (hiccup "xxx"))
+  (comp-> (h/remove-in [0] 1)
+          (h/remove-in [0 1 3] 3)
+          (h/insert-in [0 1 3]
+                       (h/hiccup [:li "aaa"])
+                       (h/hiccup [:li "bbb"]))
+          (h/insert-in [0 2]
+                       (h/hiccup [:p "xxx"])
+                       (h/hiccup [:div "yyy"])))
 
-  (remove 5 2)
-  (remove-in [5] 2)
-
-  (insert-in [0 0] (hiccup "xxx"))
-  (insert-in [0 1 5] :a)
-
-  (comp-> (insert 2 (hiccup "xxx"))
-          (insert 4 (hiccup "yyy")))
-
-  (comp-> (remove-in [0] 1)
-          (remove-in [0 1 3] 3)
-          (insert-in [0 1 3] (hiccup [:li "aaa"]) (hiccup [:li "bbb"]))
-          (insert-in [0 2] (hiccup [:p "xxx"]) (hiccup [:div "yyy"])))
-
-  (comp (move 2 1 4)
-        (move 2 1 4))
+  (vdom/comp (h/move 2 1 4)
+             (h/move 2 1 4))
 
   ,)
