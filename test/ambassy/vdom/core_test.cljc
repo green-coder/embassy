@@ -1,7 +1,22 @@
 (ns ambassy.vdom.core-test
   (:require #?(:clj  [clojure.test :refer [deftest testing is are]]
                :cljs [cljs.test :refer [deftest testing is are] :include-macros true])
-            [ambassy.vdom.core :as vdom]))
+            [ambassy.vdom.core :as vdom]
+            [ambassy.vdom.helper :as h]))
+
+
+(deftest extract-take-id->state-test
+  (is (= {}
+         (#'vdom/extract-take-id->state (-> (h/remove 2 5) :children-diff))))
+  (is (= {0 {:size 5
+             :fragments []}}
+         (#'vdom/extract-take-id->state (-> (h/move 2 5 10) :children-diff))))
+  (is (= {0 {:size 5
+             :fragments [[:update [:a :b :c :d :e]]]}}
+         (#'vdom/extract-take-id->state [[:no-op 2]
+                                         [:update-take [:a :b :c :d :e] 0]
+                                         [:no-op 3]
+                                         [:put 0]]))))
 
 
 (deftest index-op-size-test

@@ -221,18 +221,33 @@
 
 (declare comp)
 
-
+;; Different types of fragment:
+;;
+;; [:update [vdom-diffs0 vdom-diffs1 ,,,]]
+;; From :update then :take or :put then :update.
+;; At phase 3, the :take is turned into a :update-take.
+;;
+;; [:insert [vdom0 vdom1 ,,,]]
+;; From :insert then :take.
+;; At phase 3, the :take is removed and the :put is replaced by an :insert.
+;;
+;; [:remove size]
+;; From :put then :remove.
+;; At phase 3, the :take is replaced by a :remove and the :put is removed.
+;;
 (defn- extract-take-id->state [children-diff]
   (into {}
-        (keep (fn [[op-type size-or-vdom-diffs id]]
+        (keep (fn [[op-type size-or-vdom-diffs take-id]]
                 (when (or (= op-type :take)
                           (= op-type :update-take))
-                   [id (-> {:take-index 0
-                            :put-index 0}
-                           (assoc (if (vector? size-or-vdom-diffs)
-                                    :updates
-                                    :size)
-                                  size-or-vdom-diffs))])))
+                   [take-id (-> {;:take-index 0
+                                 ;:put-index  0
+                                 ,}
+                                (into (if (vector? size-or-vdom-diffs)
+                                        {:size (count size-or-vdom-diffs)
+                                         :fragments [[:update size-or-vdom-diffs]]}
+                                        {:size size-or-vdom-diffs
+                                         :fragments []})))])))
         children-diff))
 
 
@@ -612,19 +627,32 @@
            add-listeners (-> add-listeners1
                              (as-> xxx (reduce dissoc xxx remove-listeners2))
                              (into add-listeners2))
+           ;; - Pass 1 -
+           ;; Collect the information about the :take operations
            take-id->state1 (extract-take-id->state children-diff1)
            take-id->state2 (extract-take-id->state children-diff2)
-           children-diff (-> (index-ops-comp take-id->state2 children-diff2
-                                             take-id->state1 children-diff1)
-                             second ;; <- TMP
-                             index-ops-canonical)]
+
+           ;; - Pass 2 -
+           ;; Merge 2 sequences of operations into 1 sequence.
+           ;; Enrich the take states. In the output, [:take size id] and [:put size id].
+           [take-id->state children-diff] (index-ops-comp take-id->state2 children-diff2
+                                                          take-id->state1 children-diff1)
+
+           ;; - Pass 3 -
+           ;; Get rid or replace the [:take size id] and [:put size id] operations based on the take states.
+           ;; Some Defragmentation may happen on the replaced :take or :put.
+           ;; TBD
+
+           ;; - Pass 4 -
+           ;; Defragment the sequence of all the vdom-diff operations.
+           defragmented-children-diff (index-ops-canonical children-diff)]
        (-> {}
            (cond->
              (seq remove-attrs) (assoc :remove-attrs remove-attrs)
              (seq add-attrs) (assoc :add-attrs add-attrs)
              (seq remove-listeners) (assoc :remove-listeners remove-listeners)
              (seq add-listeners) (assoc :add-listeners add-listeners)
-             (seq children-diff) (assoc :children-diff children-diff))
+             (seq children-diff) (assoc :children-diff defragmented-children-diff))
            not-empty))))
   ([vdom2 vdom1 & more-vdoms]
    (reduce comp (comp vdom2 vdom1) more-vdoms)))
