@@ -69,12 +69,37 @@
           [[:no-op 2] [:remove 3]]]
          (#'vdom/head-split [[:remove 2] [:no-op 2]]
                             [[:no-op 2] [:remove 3]])))
-  #_
   (is (= [2
           [[:no-op 2] [:insert [:a :b]]]
-          ([:take 2 0] [:take 4 0])]
+          [[:take 2 0] [:take 4 0]]]
          (#'vdom/head-split [[:no-op 2] [:insert [:a :b]]]
                             [[:take 6 0]]))))
+
+
+(deftest get-fragment-test
+  (is (= [:no-op 3]
+         (#'vdom/get-fragment [[:no-op 6]]
+           2 3)))
+
+  (is (= [:update [:c :d :e]]
+         (#'vdom/get-fragment [[:update [:a :b :c :d :e :f]]]
+           2 3)))
+
+  (is (= [:no-op 2]
+         (#'vdom/get-fragment [[:update [:a :b :c :d :e :f]] [:no-op 4]]
+           7 2)))
+
+  (is (= [:update [:bb :cc]]
+         (#'vdom/get-fragment [[:update [:a :b :c :d :e :f]] [:update [:aa :bb :cc :dd]]]
+           7 2)))
+
+  (is (= [:no-op 2]
+         (#'vdom/get-fragment [[:update [:a :b :c :d :e :f]] [:no-op 4]]
+           8 2)))
+
+  (is (= [:update [:e :f]]
+         (#'vdom/get-fragment [[:no-op 4] [:update [:a :b :c :d :e :f]]]
+           8 2))))
 
 
 (deftest update-fragments-test
