@@ -153,11 +153,29 @@
 
     {} [[:no-op 2] [:insert [1 2 3]]]
     {} [[:no-op 2] [:remove 2]]
-    [{} [[:no-op 2] [:insert [1 2]] [:insert [3]] [:remove 1] [:remove 1]]]))
+    [{} [[:no-op 2] [:insert [1 2]] [:insert [3]] [:remove 1] [:remove 1]]]
 
-    ;;{} [[:no-op 2] [:remove 2]]
-    ;;{} [[:take 6 0] [:no-op 4] [:put 0]]
-    ;;[{} [:take 2] ,,,]))
+    {}
+    [[:no-op 2] [:remove 2]]
+    {0 {:size 6
+        :fragments []}}
+    [[:take 6 0] [:no-op 4] [:put 6 0]]
+    [{0 {:size 6
+         :fragments []
+         :put-index 6
+         :take-index 6}}
+     [[:take 2 0] [:take 2 0] [:take 2 0] [:no-op 2] [:remove 2] [:put 6 0]]]
+
+    {}
+    [[:update ["hi0" "hi1"]]]
+    {0 {:size 6
+        :fragments [[:no-op 2]]}}
+    [[:put 2 0] [:no-op 4] [:take 2 0]]
+    [{0 {:size 6
+         :fragments [[:update ["hi0" "hi1"]]]
+         :take-index 2
+         :put-index 2}}
+     [[:put 2 0] [:no-op 4] [:take 2 0]]]))
 
 
 (deftest index-ops-canonical-test

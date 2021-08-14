@@ -378,24 +378,35 @@
       result)))
 
 
+(defn- append-last-operations [take-id->state output iops]
+  [(reduce (fn [take-id->state [op-type arg1 arg2]]
+             (case op-type
+               :take (update-in take-id->state [arg2 :take-index] + arg1)
+               :put (update-in take-id->state [arg2 :put-index] + arg1)
+               take-id->state))
+           take-id->state
+           iops)
+   (into output iops)])
+
+
 (defn- index-ops-comp
   "Composes 2 sequences of index operations, and return the result.
    Note 2: the result is not guaranteed to be canonical/normalized."
   [new-take-id->state new-iops
    base-take-id->state base-iops]
   (let [] ;; TODO: remove the empty let.
-    (loop [output-take-id->state (into base-take-id->state
+    (loop [output-take-id->state (into {}
                                        (map (fn [[take-id state]]
                                               [take-id (assoc state
                                                          :take-index 0
                                                          :put-index 0)]))
-                                       new-take-id->state)
+                                       (concat base-take-id->state new-take-id->state))
            output []
            new-iops new-iops
            base-iops base-iops]
       (cond
-        (empty? base-iops) [output-take-id->state (into output new-iops)]
-        (empty? new-iops) [output-take-id->state (into output base-iops)]
+        (empty? base-iops) (append-last-operations output-take-id->state output new-iops)
+        (empty? new-iops) (append-last-operations output-take-id->state output base-iops)
         :else (let [[op-size split-new-iops split-base-iops] (head-split new-iops base-iops)
                     [new-op new-arg1 new-arg2 :as new-iop] (first split-new-iops)
                     [base-op base-arg1 base-arg2 :as base-iop] (first split-base-iops)]
