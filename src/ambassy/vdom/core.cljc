@@ -394,168 +394,167 @@
    Note 2: the result is not guaranteed to be canonical/normalized."
   [new-move-id->state new-iops
    base-move-id->state base-iops]
-  (let [] ;; TODO: remove the empty let.
-    (loop [output-move-id->state (into {}
-                                       (map (fn [[move-id state]]
-                                              [move-id (assoc state
-                                                         :take-index 0
-                                                         :put-index 0)]))
-                                       (concat base-move-id->state new-move-id->state))
-           output []
-           new-iops new-iops
-           base-iops base-iops]
-      (cond
-        (empty? base-iops) (append-last-operations output-move-id->state output new-iops)
-        (empty? new-iops) (append-last-operations output-move-id->state output base-iops)
-        :else (let [[op-size split-new-iops split-base-iops] (head-split new-iops base-iops)
-                    [new-op new-arg1 new-arg2 :as new-iop] (first split-new-iops)
-                    [base-op base-arg1 base-arg2 :as base-iop] (first split-base-iops)]
-                (case new-op
-                  :insert
+  (loop [output-move-id->state (into {}
+                                     (map (fn [[move-id state]]
+                                            [move-id (assoc state
+                                                       :take-index 0
+                                                       :put-index 0)]))
+                                     (concat base-move-id->state new-move-id->state))
+         output []
+         new-iops new-iops
+         base-iops base-iops]
+    (cond
+      (empty? base-iops) (append-last-operations output-move-id->state output new-iops)
+      (empty? new-iops) (append-last-operations output-move-id->state output base-iops)
+      :else (let [[op-size split-new-iops split-base-iops] (head-split new-iops base-iops)
+                  [new-op new-arg1 new-arg2 :as new-iop] (first split-new-iops)
+                  [base-op base-arg1 base-arg2 :as base-iop] (first split-base-iops)]
+              (case new-op
+                :insert
+                (recur output-move-id->state
+                       (conj output new-iop)
+                       (rest split-new-iops)
+                       split-base-iops)
+
+                :put
+                (recur (update-in output-move-id->state [new-arg2 :put-index] + op-size)
+                       (conj output new-iop)
+                       (rest split-new-iops)
+                       split-base-iops)
+
+                ;; case's else
+                (case base-op
+                  :no-op
+                  (recur (case new-op
+                           :take (update-in output-move-id->state [new-arg2 :take-index] + op-size)
+                           :put (update-in output-move-id->state [new-arg2 :put-index] + op-size)
+                           output-move-id->state)
+                         (conj output new-iop)
+                         (rest split-new-iops)
+                         (rest split-base-iops))
+
+                  :remove
                   (recur output-move-id->state
-                         (conj output new-iop)
-                         (rest split-new-iops)
-                         split-base-iops)
+                         (conj output base-iop)
+                         split-new-iops
+                         (rest split-base-iops))
 
-                  :put
-                  (recur (update-in output-move-id->state [new-arg2 :put-index] + op-size)
-                         (conj output new-iop)
-                         (rest split-new-iops)
-                         split-base-iops)
+                  :take
+                  (recur (update-in output-move-id->state [base-arg2 :take-index] + op-size)
+                         (conj output base-iop)
+                         split-new-iops
+                         (rest split-base-iops))
 
-                  ;; case's else
-                  (case base-op
+                  :update
+                  (case new-op
                     :no-op
-                    (recur (case new-op
-                             :take (update-in output-move-id->state [new-arg2 :take-index] + op-size)
-                             :put (update-in output-move-id->state [new-arg2 :put-index] + op-size)
-                             output-move-id->state)
-                           (conj output new-iop)
+                    (recur output-move-id->state
+                           (conj output base-iop)
+                           (rest split-new-iops)
+                           (rest split-base-iops))
+
+                    :update
+                    (recur output-move-id->state
+                           (conj output [:update (mapv comp new-arg1 base-arg1)])
                            (rest split-new-iops)
                            (rest split-base-iops))
 
                     :remove
                     (recur output-move-id->state
-                           (conj output base-iop)
-                           split-new-iops
+                           (conj output new-iop)
+                           (rest split-new-iops)
                            (rest split-base-iops))
 
                     :take
-                    (recur (update-in output-move-id->state [base-arg2 :take-index] + op-size)
-                           (conj output base-iop)
-                           split-new-iops
-                           (rest split-base-iops))
+                    (recur (update output-move-id->state new-arg2
+                                   (fn [{:keys [take-index] :as state}]
+                                     (-> state
+                                         (update :take-index + op-size)
+                                         (update :fragments update-fragments take-index op-size
+                                                 (fn [[fragment-type fragment-arg]]
+                                                   (case fragment-type
+                                                     :no-op base-iop
+                                                     :update [:update (mapv comp fragment-arg base-arg1)]))))))
+                           (conj output new-iop)
+                           (rest split-new-iops)
+                           (rest split-base-iops)))
 
-                    :update
-                    (case new-op
-                      :no-op
-                      (recur output-move-id->state
-                             (conj output base-iop)
-                             (rest split-new-iops)
-                             (rest split-base-iops))
-
-                      :update
-                      (recur output-move-id->state
-                             (conj output [:update (mapv comp new-arg1 base-arg1)])
-                             (rest split-new-iops)
-                             (rest split-base-iops))
-
-                      :remove
-                      (recur output-move-id->state
-                             (conj output new-iop)
-                             (rest split-new-iops)
-                             (rest split-base-iops))
-
-                      :take
-                      (recur (update output-move-id->state new-arg2
-                                     (fn [{:keys [take-index] :as state}]
-                                       (-> state
-                                           (update :take-index + op-size)
-                                           (update :fragments update-fragments take-index op-size
-                                                   (fn [[fragment-type fragment-arg]]
-                                                     (case fragment-type
-                                                       :no-op base-iop
-                                                       :update [:update (mapv comp fragment-arg base-arg1)]))))))
-                             (conj output new-iop)
-                             (rest split-new-iops)
-                             (rest split-base-iops)))
-
-                    :insert (case new-op
-                              :no-op (recur output-move-id->state
-                                            (conj output base-iop)
-                                            (rest split-new-iops)
-                                            (rest split-base-iops))
-                              :update (recur output-move-id->state
-                                             (conj output [:insert (mapv comp new-arg1 base-arg1)])
-                                             (rest split-new-iops)
-                                             (rest split-base-iops))
-                              :remove (recur output-move-id->state
-                                             output
-                                             (rest split-new-iops)
-                                             (rest split-base-iops))
-                              :take (recur (update output-move-id->state new-arg2
-                                                   (fn [{:keys [take-index] :as state}]
-                                                     (-> state
-                                                         (update :take-index + op-size)
-                                                         (update :fragments update-fragments take-index op-size
-                                                                 (fn [[fragment-type fragment-arg]]
-                                                                   (case fragment-type
-                                                                     :no-op base-iop
-                                                                     :update [:insert (mapv comp fragment-arg base-arg1)]))))))
-                                           (conj output new-iop)
+                  :insert (case new-op
+                            :no-op (recur output-move-id->state
+                                          (conj output base-iop)
+                                          (rest split-new-iops)
+                                          (rest split-base-iops))
+                            :update (recur output-move-id->state
+                                           (conj output [:insert (mapv comp new-arg1 base-arg1)])
                                            (rest split-new-iops)
-                                           (rest split-base-iops)))
-                    :put (case new-op
-                           :no-op (recur (update-in output-move-id->state [base-arg2 :put-index] + op-size)
-                                         (conj output base-iop)
+                                           (rest split-base-iops))
+                            :remove (recur output-move-id->state
+                                           output
+                                           (rest split-new-iops)
+                                           (rest split-base-iops))
+                            :take (recur (update output-move-id->state new-arg2
+                                                 (fn [{:keys [take-index] :as state}]
+                                                   (-> state
+                                                       (update :take-index + op-size)
+                                                       (update :fragments update-fragments take-index op-size
+                                                               (fn [[fragment-type fragment-arg]]
+                                                                 (case fragment-type
+                                                                   :no-op base-iop
+                                                                   :update [:insert (mapv comp fragment-arg base-arg1)]))))))
+                                         (conj output new-iop)
                                          (rest split-new-iops)
-                                         (rest split-base-iops))
-                           :update (recur (update output-move-id->state base-arg2
-                                                  (fn [{:keys [put-index] :as state}]
-                                                    (-> state
-                                                        (update :put-index + op-size)
-                                                        (update :fragments update-fragments put-index op-size
-                                                                (fn [[fragment-type fragment-arg]]
-                                                                  (case fragment-type
-                                                                    :no-op new-iop
-                                                                    :update [:update (mapv comp new-arg1 fragment-arg)]))))))
-                                          (conj output base-iop)
-                                          (rest split-new-iops)
-                                          (rest split-base-iops))
-                           :remove (recur (update output-move-id->state base-arg2
-                                                  (fn [{:keys [put-index] :as state}]
-                                                    (-> state
-                                                        (update :put-index + op-size)
-                                                        (update :fragments update-fragments put-index op-size
-                                                                (fn [_] new-iop)))))
-                                          (conj output base-iop)
-                                          (rest split-new-iops)
-                                          (rest split-base-iops))
-                           :take (recur (-> output-move-id->state
-                                            (update base-arg2
-                                                    (fn [{:keys [put-index] :as state}]
-                                                      (-> state
-                                                          (update :put-index + op-size)
-                                                          (update :fragments update-fragments put-index op-size
-                                                                  (fn [[base-frag-type base-frag-arg :as base-frag]]
-                                                                    (let [new-take-state (output-move-id->state new-arg2)
-                                                                          [new-frag-type new-frag-arg :as new-frag] (get-fragment (:fragments new-take-state)
-                                                                                                                                  (:take-index new-take-state)
-                                                                                                                                  op-size)]
-                                                                      (case [new-frag-type base-frag-type]
-                                                                        [:no-op :no-op] base-frag
-                                                                        [:no-op :update] base-frag
-                                                                        [:update :no-op] new-frag
-                                                                        [:update :update] [:update (mapv comp new-frag-arg base-frag-arg)])))))))
-                                            (update new-arg2
-                                                    (fn [{:keys [take-index] :as state}]
-                                                      (-> state
-                                                          (update :take-index + op-size)
-                                                          (update :fragments update-fragments take-index op-size
-                                                                  (fn [_] [:do-not-take op-size]))))))
-                                        (conj output base-iop new-iop) ;; new-iop will be discarded in the phase 3
+                                         (rest split-base-iops)))
+                  :put (case new-op
+                         :no-op (recur (update-in output-move-id->state [base-arg2 :put-index] + op-size)
+                                       (conj output base-iop)
+                                       (rest split-new-iops)
+                                       (rest split-base-iops))
+                         :update (recur (update output-move-id->state base-arg2
+                                                (fn [{:keys [put-index] :as state}]
+                                                  (-> state
+                                                      (update :put-index + op-size)
+                                                      (update :fragments update-fragments put-index op-size
+                                                              (fn [[fragment-type fragment-arg]]
+                                                                (case fragment-type
+                                                                  :no-op new-iop
+                                                                  :update [:update (mapv comp new-arg1 fragment-arg)]))))))
+                                        (conj output base-iop)
                                         (rest split-new-iops)
-                                        (rest split-base-iops))))))))))
+                                        (rest split-base-iops))
+                         :remove (recur (update output-move-id->state base-arg2
+                                                (fn [{:keys [put-index] :as state}]
+                                                  (-> state
+                                                      (update :put-index + op-size)
+                                                      (update :fragments update-fragments put-index op-size
+                                                              (fn [_] new-iop)))))
+                                        (conj output base-iop)
+                                        (rest split-new-iops)
+                                        (rest split-base-iops))
+                         :take (recur (-> output-move-id->state
+                                          (update base-arg2
+                                                  (fn [{:keys [put-index] :as state}]
+                                                    (-> state
+                                                        (update :put-index + op-size)
+                                                        (update :fragments update-fragments put-index op-size
+                                                                (fn [[base-frag-type base-frag-arg :as base-frag]]
+                                                                  (let [new-take-state (output-move-id->state new-arg2)
+                                                                        [new-frag-type new-frag-arg :as new-frag] (get-fragment (:fragments new-take-state)
+                                                                                                                                (:take-index new-take-state)
+                                                                                                                                op-size)]
+                                                                    (case [new-frag-type base-frag-type]
+                                                                      [:no-op :no-op] base-frag
+                                                                      [:no-op :update] base-frag
+                                                                      [:update :no-op] new-frag
+                                                                      [:update :update] [:update (mapv comp new-frag-arg base-frag-arg)])))))))
+                                          (update new-arg2
+                                                  (fn [{:keys [take-index] :as state}]
+                                                    (-> state
+                                                        (update :take-index + op-size)
+                                                        (update :fragments update-fragments take-index op-size
+                                                                (fn [_] [:do-not-take op-size]))))))
+                                      (conj output base-iop new-iop) ;; new-iop will be discarded in the phase 3
+                                      (rest split-new-iops)
+                                      (rest split-base-iops)))))))))
 
 
 (defn- transform-orphan-takes-into-removes
