@@ -476,7 +476,7 @@
                                                      (case fragment-type
                                                        :no-op base-iop
                                                        :update [:update (mapv comp fragment-arg base-arg1)]))))))
-                             (conj output new-iops)
+                             (conj output new-iop)
                              (rest split-new-iops)
                              (rest split-base-iops)))
 
@@ -614,6 +614,10 @@
      ;; nil represents a no-change diff
      (nil? vdom1) vdom2
      (nil? vdom2) vdom1
+
+     ;; If any vdom is a string
+     (or (string? vdom2)
+         (string? vdom1)) vdom2
 
      ;; vdom2 overwrites vdom1
      (contains? vdom2 :tag) vdom2

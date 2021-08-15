@@ -140,42 +140,95 @@
 
 
 (deftest index-ops-comp-test
-  (are [new-take-id->size new-iops
-        base-take-id->size base-iops
-        expected-result]
-    (= expected-result
-       (#'vdom/index-ops-comp new-take-id->size new-iops
-                              base-take-id->size base-iops))
+  (is (= [{}
+          [[:no-op 1] [:remove 1] [:remove 1] [:no-op 1] [:insert [1 2 3]]]]
+         (#'vdom/index-ops-comp
+           {} [[:no-op 2] [:insert [1 2 3]]]
+           {} [[:no-op 1] [:remove 2]])))
 
-    {} [[:no-op 2] [:insert [1 2 3]]]
-    {} [[:no-op 1] [:remove 2]]
-    [{} [[:no-op 1] [:remove 1] [:remove 1] [:no-op 1] [:insert [1 2 3]]]]
+  (is (= [{}
+          [[:no-op 2] [:insert [1 2]] [:insert [3]] [:remove 1] [:remove 1]]]
+         (#'vdom/index-ops-comp
+           {} [[:no-op 2] [:insert [1 2 3]]]
+           {} [[:no-op 2] [:remove 2]])))
 
-    {} [[:no-op 2] [:insert [1 2 3]]]
-    {} [[:no-op 2] [:remove 2]]
-    [{} [[:no-op 2] [:insert [1 2]] [:insert [3]] [:remove 1] [:remove 1]]]
+  (is (= [{0 {:size 6
+               :fragments []
+               :put-index 6
+               :take-index 6}}
+          [[:take 2 0] [:take 2 0] [:take 2 0] [:no-op 2] [:remove 2] [:put 6 0]]]
+         (#'vdom/index-ops-comp
+           {}
+           [[:no-op 2] [:remove 2]]
+           {0 {:size 6
+               :fragments []}}
+           [[:take 6 0] [:no-op 4] [:put 6 0]])))
 
-    {}
-    [[:no-op 2] [:remove 2]]
-    {0 {:size 6
-        :fragments []}}
-    [[:take 6 0] [:no-op 4] [:put 6 0]]
-    [{0 {:size 6
-         :fragments []
-         :put-index 6
-         :take-index 6}}
-     [[:take 2 0] [:take 2 0] [:take 2 0] [:no-op 2] [:remove 2] [:put 6 0]]]
+  (is (= [{0 {:size       2
+              :fragments  [[:update ["x" "y"]]]
+              :take-index 2
+              :put-index  2}}
+          [[:put 2 0] [:no-op 4] [:take 2 0]]]
+         (#'vdom/index-ops-comp
+           {}
+           [[:update ["x" "y"]]]
+           {0 {:size 2
+               :fragments [[:no-op 2]]}}
+           [[:put 2 0] [:no-op 4] [:take 2 0]])))
 
-    {}
-    [[:update ["hi0" "hi1"]]]
-    {0 {:size 6
-        :fragments [[:no-op 2]]}}
-    [[:put 2 0] [:no-op 4] [:take 2 0]]
-    [{0 {:size 6
-         :fragments [[:update ["hi0" "hi1"]]]
-         :take-index 2
-         :put-index 2}}
-     [[:put 2 0] [:no-op 4] [:take 2 0]]]))
+  (is (= [{0 {:size       2
+              :fragments  [[:update ["x" "y"]]]
+              :take-index 2
+              :put-index  2}}
+          [[:take 2 0] [:no-op 4] [:put 2 0]]]
+         (#'vdom/index-ops-comp
+           {0 {:size 2
+               :fragments [[:no-op 2]]}}
+           [[:take 2 0] [:no-op 4] [:put 2 0]]
+           {}
+           [[:update ["x" "y"]]])))
+
+  (is (= [{0 {:size       2
+              :fragments  [[:insert ["x" "y"]]]
+              :take-index 2
+              :put-index  2}}
+          [[:take 2 0] [:no-op 4] [:put 2 0]]]
+         (#'vdom/index-ops-comp
+           {0 {:size 2
+               :fragments [[:no-op 2]]}}
+           [[:take 2 0] [:no-op 4] [:put 2 0]]
+           {}
+           [[:insert ["x" "y"]]])))
+
+  (is (= [{0 {:size       2
+              :fragments  [[:insert ["xx" "yy"]]]
+              :take-index 2
+              :put-index  2}}
+          [[:take 2 0] [:no-op 4] [:put 2 0]]]
+         (#'vdom/index-ops-comp
+           {0 {:size 2
+               :fragments [[:update ["xx" "yy"]]]}}
+           [[:take 2 0] [:no-op 4] [:put 2 0]]
+           {}
+           [[:insert ["x" "y"]]])))
+
+  ;; TODO: Some information is missing to know how to update the take/put base/new in the next pass.
+  (is (= [{0 {:size       2
+              :fragments  [[:no-op 2]]
+              :take-index 2
+              :put-index  2}
+           1 {:size 2
+              :fragments  [[:do-not-take 2]]
+              :take-index 2
+              :put-index  2}}
+          [[:put 2 1] [:take 2 0] [:no-op 2] [:no-op 2] [:put 2 0] [:take 2 1]]]
+         (#'vdom/index-ops-comp
+           {1 {:size 2
+               :fragments [[:no-op 2]]}}
+           [[:put 2 1] [:no-op 4] [:take 2 1]]
+           {0 {:size 2
+               :fragments [[:no-op 2]]}}
+           [[:take 2 0] [:no-op 4] [:put 2 0]]))))
 
 
 (deftest index-ops-canonical-test
