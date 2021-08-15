@@ -100,7 +100,7 @@
          node))))
 
 #?(:cljs
-   (defn- extract-take-id->arg1 [children-diff]
+   (defn- extract-move-id->arg1 [children-diff]
      (into {}
            (keep (fn [[op-type size-or-vdom-diffs id]]
                    (when (or (= op-type :take)
@@ -138,8 +138,8 @@
          (doseq [[event-type event-handler] add-listeners]
            (add-listeners dom event-type event-handler))
 
-         (let [take-id->arg1 (extract-take-id->arg1 children-diff)
-               take-id->dom-nodes (-> (reduce (fn [[m index] [op arg1 arg2]]
+         (let [move-id->arg1 (extract-move-id->arg1 children-diff)
+               move-id->dom-nodes (-> (reduce (fn [[m index] [op arg1 arg2]]
                                                 (case op
                                                   (:no-op :remove) [m (+ index arg1)]
                                                   (:update :insert) [m (+ index (count arg1))]
@@ -159,7 +159,7 @@
                                                                                         (-> dom-child-nodes (.item index)))
                                                                                       (range index (+ index (count arg1)))))
                                                                   (+ index arg2)])
-                                                  :put [m (+ index (let [take-arg1 (take-id->arg1 arg1)]
+                                                  :put [m (+ index (let [take-arg1 (move-id->arg1 arg1)]
                                                                      (if (vector? take-arg1)
                                                                        (count take-arg1)
                                                                        take-arg1)))]))
@@ -194,11 +194,11 @@
                    :take (recur next-operations (+ index arg1))
                    :update-take (recur next-operations (+ index (count arg1)))
                    :put (let [^js node-to (-> dom-child-nodes (.item index))
-                              take-arg1 (take-id->arg1 arg1)
+                              take-arg1 (move-id->arg1 arg1)
                               size (if (vector? take-arg1)
                                      (count take-arg1)
                                      take-arg1)
-                              nodes-from (take-id->dom-nodes arg1)]
+                              nodes-from (move-id->dom-nodes arg1)]
                           (-> node-to .-before (.apply node-to (into-array nodes-from)))
                           (recur next-operations (+ index size))))))))
 
@@ -238,20 +238,20 @@
 ;; From :insert then :take.
 ;; At pass 3, the :take is removed and the :put is replaced by an :insert.
 ;;
-;; [:move size new-take-id] (on the old take state)
+;; [:move size new-move-id] (on the old take state)
 ;; From :put then :take.
-;; At pass 3, ... things become complicated, the old move take operation has to split into multiple take-id
+;; At pass 3, ... things become complicated, the old move take operation has to split into multiple move-id
 ;; around the old part which is put.
 
 ;; The output sequence of operations replaced :take, :update-take and :put by this format:
 ;; - [:take size id]
 ;; - [:put size id]
-(defn- preprocess-moves [iops take-id-offset]
-  (let [take-id->state (into {}
-                             (keep (fn [[op-type size-or-vdom-diffs take-id]]
+(defn- preprocess-moves [iops move-id-offset]
+  (let [move-id->state (into {}
+                             (keep (fn [[op-type size-or-vdom-diffs move-id]]
                                      (when (or (= op-type :take)
                                                (= op-type :update-take))
-                                        [(+ take-id take-id-offset)
+                                        [(+ move-id move-id-offset)
                                          (if (vector? size-or-vdom-diffs)
                                            {:size (count size-or-vdom-diffs)
                                             :fragments [[:update size-or-vdom-diffs]]}
@@ -265,14 +265,14 @@
                                     iop
 
                                     (:take :update-take)
-                                    (let [take-id (+ arg2 take-id-offset)]
-                                      [:take (-> take-id take-id->state :size) take-id])
+                                    (let [move-id (+ arg2 move-id-offset)]
+                                      [:take (-> move-id move-id->state :size) move-id])
 
                                     :put
-                                    (let [take-in (+ arg1 take-id-offset)]
-                                      [:put (-> take-in take-id->state :size) take-in]))))
+                                    (let [move-id (+ arg1 move-id-offset)]
+                                      [:put (-> move-id move-id->state :size) move-id]))))
                            iops)]
-    [take-id->state simpler-iops]))
+    [move-id->state simpler-iops]))
 
 
 (defn- index-op-size
@@ -378,13 +378,13 @@
       result)))
 
 
-(defn- append-last-operations [take-id->state output iops]
-  [(reduce (fn [take-id->state [op-type arg1 arg2]]
+(defn- append-last-operations [move-id->state output iops]
+  [(reduce (fn [move-id->state [op-type arg1 arg2]]
              (case op-type
-               :take (update-in take-id->state [arg2 :take-index] + arg1)
-               :put (update-in take-id->state [arg2 :put-index] + arg1)
-               take-id->state))
-           take-id->state
+               :take (update-in move-id->state [arg2 :take-index] + arg1)
+               :put (update-in move-id->state [arg2 :put-index] + arg1)
+               move-id->state))
+           move-id->state
            iops)
    (into output iops)])
 
@@ -392,33 +392,33 @@
 (defn- index-ops-comp
   "Composes 2 sequences of index operations, and return the result.
    Note 2: the result is not guaranteed to be canonical/normalized."
-  [new-take-id->state new-iops
-   base-take-id->state base-iops]
+  [new-move-id->state new-iops
+   base-move-id->state base-iops]
   (let [] ;; TODO: remove the empty let.
-    (loop [output-take-id->state (into {}
-                                       (map (fn [[take-id state]]
-                                              [take-id (assoc state
+    (loop [output-move-id->state (into {}
+                                       (map (fn [[move-id state]]
+                                              [move-id (assoc state
                                                          :take-index 0
                                                          :put-index 0)]))
-                                       (concat base-take-id->state new-take-id->state))
+                                       (concat base-move-id->state new-move-id->state))
            output []
            new-iops new-iops
            base-iops base-iops]
       (cond
-        (empty? base-iops) (append-last-operations output-take-id->state output new-iops)
-        (empty? new-iops) (append-last-operations output-take-id->state output base-iops)
+        (empty? base-iops) (append-last-operations output-move-id->state output new-iops)
+        (empty? new-iops) (append-last-operations output-move-id->state output base-iops)
         :else (let [[op-size split-new-iops split-base-iops] (head-split new-iops base-iops)
                     [new-op new-arg1 new-arg2 :as new-iop] (first split-new-iops)
                     [base-op base-arg1 base-arg2 :as base-iop] (first split-base-iops)]
                 (case new-op
                   :insert
-                  (recur output-take-id->state
+                  (recur output-move-id->state
                          (conj output new-iop)
                          (rest split-new-iops)
                          split-base-iops)
 
                   :put
-                  (recur (update-in output-take-id->state [new-arg2 :put-index] + op-size)
+                  (recur (update-in output-move-id->state [new-arg2 :put-index] + op-size)
                          (conj output new-iop)
                          (rest split-new-iops)
                          split-base-iops)
@@ -427,21 +427,21 @@
                   (case base-op
                     :no-op
                     (recur (case new-op
-                             :take (update-in output-take-id->state [new-arg2 :take-index] + op-size)
-                             :put (update-in output-take-id->state [new-arg2 :put-index] + op-size)
-                             output-take-id->state)
+                             :take (update-in output-move-id->state [new-arg2 :take-index] + op-size)
+                             :put (update-in output-move-id->state [new-arg2 :put-index] + op-size)
+                             output-move-id->state)
                            (conj output new-iop)
                            (rest split-new-iops)
                            (rest split-base-iops))
 
                     :remove
-                    (recur output-take-id->state
+                    (recur output-move-id->state
                            (conj output base-iop)
                            split-new-iops
                            (rest split-base-iops))
 
                     :take
-                    (recur (update-in output-take-id->state [base-arg2 :take-index] + op-size)
+                    (recur (update-in output-move-id->state [base-arg2 :take-index] + op-size)
                            (conj output base-iop)
                            split-new-iops
                            (rest split-base-iops))
@@ -449,25 +449,25 @@
                     :update
                     (case new-op
                       :no-op
-                      (recur output-take-id->state
+                      (recur output-move-id->state
                              (conj output base-iop)
                              (rest split-new-iops)
                              (rest split-base-iops))
 
                       :update
-                      (recur output-take-id->state
+                      (recur output-move-id->state
                              (conj output [:update (mapv comp new-arg1 base-arg1)])
                              (rest split-new-iops)
                              (rest split-base-iops))
 
                       :remove
-                      (recur output-take-id->state
+                      (recur output-move-id->state
                              (conj output new-iop)
                              (rest split-new-iops)
                              (rest split-base-iops))
 
                       :take
-                      (recur (update output-take-id->state new-arg2
+                      (recur (update output-move-id->state new-arg2
                                      (fn [{:keys [take-index] :as state}]
                                        (-> state
                                            (update :take-index + op-size)
@@ -481,19 +481,19 @@
                              (rest split-base-iops)))
 
                     :insert (case new-op
-                              :no-op (recur output-take-id->state
+                              :no-op (recur output-move-id->state
                                             (conj output base-iop)
                                             (rest split-new-iops)
                                             (rest split-base-iops))
-                              :update (recur output-take-id->state
+                              :update (recur output-move-id->state
                                              (conj output [:insert (mapv comp new-arg1 base-arg1)])
                                              (rest split-new-iops)
                                              (rest split-base-iops))
-                              :remove (recur output-take-id->state
+                              :remove (recur output-move-id->state
                                              output
                                              (rest split-new-iops)
                                              (rest split-base-iops))
-                              :take (recur (update output-take-id->state new-arg2
+                              :take (recur (update output-move-id->state new-arg2
                                                    (fn [{:keys [take-index] :as state}]
                                                      (-> state
                                                          (update :take-index + op-size)
@@ -506,11 +506,11 @@
                                            (rest split-new-iops)
                                            (rest split-base-iops)))
                     :put (case new-op
-                           :no-op (recur (update-in output-take-id->state [base-arg2 :put-index] + op-size)
+                           :no-op (recur (update-in output-move-id->state [base-arg2 :put-index] + op-size)
                                          (conj output base-iop)
                                          (rest split-new-iops)
                                          (rest split-base-iops))
-                           :update (recur (update output-take-id->state base-arg2
+                           :update (recur (update output-move-id->state base-arg2
                                                   (fn [{:keys [put-index] :as state}]
                                                     (-> state
                                                         (update :put-index + op-size)
@@ -522,7 +522,7 @@
                                           (conj output base-iop)
                                           (rest split-new-iops)
                                           (rest split-base-iops))
-                           :remove (recur (update output-take-id->state base-arg2
+                           :remove (recur (update output-move-id->state base-arg2
                                                   (fn [{:keys [put-index] :as state}]
                                                     (-> state
                                                         (update :put-index + op-size)
@@ -531,14 +531,14 @@
                                           (conj output base-iop)
                                           (rest split-new-iops)
                                           (rest split-base-iops))
-                           :take (recur (-> output-take-id->state
+                           :take (recur (-> output-move-id->state
                                             (update base-arg2
                                                     (fn [{:keys [put-index] :as state}]
                                                       (-> state
                                                           (update :put-index + op-size)
                                                           (update :fragments update-fragments put-index op-size
                                                                   (fn [[base-frag-type base-frag-arg :as base-frag]]
-                                                                    (let [new-take-state (output-take-id->state new-arg2)
+                                                                    (let [new-take-state (output-move-id->state new-arg2)
                                                                           [new-frag-type new-frag-arg :as new-frag] (get-fragment (:fragments new-take-state)
                                                                                                                                   (:take-index new-take-state)
                                                                                                                                   op-size)]
@@ -560,11 +560,11 @@
 
 (defn- transform-orphan-takes-into-removes
   "Returns the operations where any :take which do not have a matching :put is changed into a :remove.
-   ... also return a transformed take-id->size.
+   ... also return a transformed move-id->size.
    This function should be called before index-ops-canonical."
-  [take-id->size iops]
-  (let [orphan-take-ids (set/difference (set (keys take-id->size))
-                                        ;; all the used take-ids
+  [move-id->size iops]
+  (let [orphan-move-ids (set/difference (set (keys move-id->size))
+                                        ;; all the used move-ids
                                         (->> iops
                                              (keep (fn [[op-type arg1]]
                                                      (when (= op-type :put)
@@ -573,12 +573,12 @@
         transformed-iops (into []
                                (map (fn [[op-type arg1 :as operation]]
                                       (if (and (= op-type :take)
-                                               (contains? orphan-take-ids arg1))
+                                               (contains? orphan-move-ids arg1))
                                         [:remove arg1]
                                         operation)))
                                iops)
-        transformed-take-id->size (apply dissoc take-id->size orphan-take-ids)]
-    [transformed-take-id->size transformed-iops]))
+        transformed-move-id->size (apply dissoc move-id->size orphan-move-ids)]
+    [transformed-move-id->size transformed-iops]))
 
 
 (defn- index-ops-canonical
@@ -680,14 +680,14 @@
                              (into add-listeners2))
            ;; - Pass 1 -
            ;; Collect the information about the :take operations
-           [take-id->state1 children-diff1] (preprocess-moves children-diff1 0)
-           [take-id->state2 children-diff2] (preprocess-moves children-diff2 (count take-id->state1))
+           [move-id->state1 children-diff1] (preprocess-moves children-diff1 0)
+           [move-id->state2 children-diff2] (preprocess-moves children-diff2 (count move-id->state1))
 
            ;; - Pass 2 -
            ;; Merge 2 sequences of operations into 1 sequence.
            ;; Enrich the take states. In the output, [:take size id] and [:put size id].
-           [take-id->state children-diff] (index-ops-comp take-id->state2 children-diff2
-                                                          take-id->state1 children-diff1)
+           [move-id->state children-diff] (index-ops-comp move-id->state2 children-diff2
+                                                          move-id->state1 children-diff1)
 
            ;; - Pass 3 -
            ;; Get rid or replace the [:take size id] and [:put size id] operations based on the take states.
