@@ -17,36 +17,15 @@
                                  [:ul
                                   (for [i (range 10)]
                                     [:li "Item " i])]]]))
-    #_
-    (vdom/apply-vdom {:children-diff [
-                                      ;;[:remove 1]
-                                      [:no-op 1]
-                                      [:update [#_(h/hiccup [:div "zzz"])
-                                                {:children-diff [[:no-op 1]
-                                                                 [:update [{:children-diff [[:no-op 3]
-                                                                                            [:remove 2]
-                                                                                            [:insert [(h/hiccup [:li "aaa"])
-                                                                                                      (h/hiccup [:li "bbb"])]]]
-                                                                            :children-moves [[4 1 8]
-                                                                                             [1 7 6]]}]]]}]]
-                                      [:insert [(h/hiccup [:p "xxx"])
-                                                (h/hiccup [:div "yyy"])]]]})
     (vdom/apply-vdom (h/remove-in [0] 1))
-    (vdom/apply-vdom (h/update-in [0 1] {:children-diff [[:no-op 2]
-                                                         [:put 0]
-                                                         [:no-op 3]
-                                                         [:update-take [(h/insert 2 " foo")
-                                                                        (h/insert 2 " bar")] 0]]}))
-    ;;(apply-vdom (h/update-in [0 1] (h/move 2 2 6)))
-    ;;(apply-vdom (h/remove-in [0 1 3] 3))
-    ;;(apply-vdom (h/insert-in [0 1 3] (h/hiccup [:li "aaa"]) (h/hiccup [:li "bbb"])))
-    ;;(apply-vdom (h/insert-in [0 2] (h/hiccup [:p "xxx"]) (h/hiccup [:div "yyy"])))
-
-    #_
-    (apply-vdom (h/comp-> (h/remove-in [0] 1)
-                          (h/remove-in [0 1 3] 3)
-                          (h/insert-in [0 1 3] (h/hiccup [:li "aaa"]) (h/hiccup [:li "bbb"]))
-                          (h/insert-in [0 2] (h/hiccup [:p "xxx"]) (h/hiccup [:div "yyy"]))))
+    (vdom/apply-vdom (h/update-in [0 1]
+                                  {:children-ops [{:type :no-op, :size 2}
+                                                  {:type :put, :move-id 0}
+                                                  {:type :no-op, :size 1}
+                                                  {:type :take
+                                                   :move-id 0
+                                                   :operations [{:type :no-op, :size 1}
+                                                                {:type :update, :elements [(h/hiccup [:li "Foobar"])]}]}]}))
     ,)
   ,)
 

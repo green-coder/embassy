@@ -14,6 +14,8 @@
 (get-in (-> js/document (.getElementById "app"))
         [0 0 1 5])
 
+(defn seq-indexed [coll]
+  (map-indexed vector coll))
 
 (defn replace-subvec
   "Returns a vector with a sub-section at position `index` replaced by the vector `sv`."

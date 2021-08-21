@@ -62,25 +62,29 @@
                     :style {:color :red}} "This is a paragraph."]
                [:button {:on-click (fn [event] (js/console.log event))} "Click me"]])
 
-(defn- skip-n-elements [children-diff n-elements]
-  (cond-> children-diff
+(defn- skip-n-elements [children-ops n-elements]
+  (cond-> children-ops
     (> n-elements 0)
-    (conj [:no-op n-elements])))
+    (conj {:type :no-op
+           :size n-elements})))
 
 (defn update [index vdom & more-vdoms]
-  {:children-diff (-> []
-                      (skip-n-elements index)
-                      (conj [:update (into [vdom] more-vdoms)]))})
+  {:children-ops (-> []
+                     (skip-n-elements index)
+                     (conj {:type :update
+                            :elements (into [vdom] more-vdoms)}))})
 
 (defn insert [index vdom & more-vdoms]
-  {:children-diff (-> []
-                      (skip-n-elements index)
-                      (conj [:insert (into [vdom] more-vdoms)]))})
+  {:children-ops (-> []
+                     (skip-n-elements index)
+                     (conj {:type :insert
+                            :elements (into [vdom] more-vdoms)}))})
 
 (defn remove [index size]
-  {:children-diff (-> []
-                      (skip-n-elements index)
-                      (conj [:remove size]))})
+  {:children-ops (-> []
+                     (skip-n-elements index)
+                     (conj {:type :remove
+                            :size size}))})
 
 (defn update-in [path vdom & more-vdoms]
   (if (seq path)
@@ -108,19 +112,30 @@
     (if (zero? size)
       ;; The absence of change
       nil
-      ;; The great /dev/null operator
+      ;; The great /dev/null operator - this dom element needs to be deleted.
       {:tag nil})))
 
 (defn move [from-index size to-index]
-  {:children-diff (if (<= from-index to-index)
-                    [[:no-op from-index]
-                     [:take size 0]
-                     [:no-op (- to-index from-index size)]
-                     [:put 0]]
-                    [[:no-op to-index]
-                     [:put 0]
-                     [:no-op (- from-index to-index size)]
-                     [:take size 0]])})
+  (when (pos? size)
+    {:children-ops (if (<= from-index to-index)
+                     (-> []
+                         (skip-n-elements from-index)
+                         (conj {:type     :take
+                                :operations [{:type :no-op
+                                              :size size}]
+                                :move-id 0})
+                         (skip-n-elements (- to-index from-index size))
+                         (conj {:type :put
+                                :move-id 0}))
+                     (-> []
+                         (skip-n-elements to-index)
+                         (conj {:type :put
+                                :move-id 0})
+                         (skip-n-elements (- from-index to-index size))
+                         (conj {:type     :take
+                                :operations [{:type :no-op
+                                              :size size}]
+                                :move-id 0})))}))
 
 (defn comp-in-> [path & vdoms]
   (update-in path (apply vdom/comp-> vdoms)))

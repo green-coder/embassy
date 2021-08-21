@@ -47,15 +47,33 @@
    :remove-listeners #{"focus"}
    :add-listeners {"click" (fn [event] ,,,)}
 
-   ;; Re-use the vector format (index-op) from Diffuse.
-   :children-diff [[:no-op size0]
-                   [:update [vdom-diff0 vdom-diff1 ,,,]]
-                   [:remove size1]
-                   [:insert [vdom0 vdom1 ,,,]]
-                   [:take size2 id0]
-                   [:update-take [vdom-diff2 vdom-diff3 ,,,] id0]
-                   [:put id0]
-                   ,,,]}
+   ;;;; Re-use the vector format (index-op) from Diffuse.
+   ;;:children-diff [[:no-op size0]
+   ;;                [:update [vdom-diff0 vdom-diff1 ,,,]]
+   ;;                [:remove size1]
+   ;;                [:insert [vdom0 vdom1 ,,,]]
+   ;;                [:take size2 id0]
+   ;;                [:update-take [vdom-diff2 vdom-diff3 ,,,] id0]
+   ;;                [:put id0]
+   ;;                ,,,]
+
+   :children-ops [{:type :no-op
+                   :size n}
+                  {:type :update
+                   :elements [vdom-diff0 vdom-diff1 ,,,]}
+                  {:type :remove
+                   :size n}
+                  {:type :insert
+                   :elements [vdom0 vdom1 ,,,]}
+                  {:type :take
+                   :operations [{:type :no-op
+                                 :size n}
+                                {:type :update
+                                 :elements [vdom-diff2 vdom-diff3 ,,,]}]
+                   :move-id x}
+                  {:type :put
+                   :move-id x}]}
+
 
   ,)
 
@@ -100,15 +118,6 @@
          node))))
 
 #?(:cljs
-   (defn- extract-move-id->arg1 [children-diff]
-     (into {}
-           (keep (fn [[op-type size-or-vdom-diffs id]]
-                   (when (or (= op-type :take)
-                             (= op-type :update-take))
-                     [id size-or-vdom-diffs])))
-           children-diff)))
-
-#?(:cljs
    ;; The parent is responsible for replacing the previous dom node
    ;; by the new one if they are different nodes.
    (defn- apply-vdom* [^js dom vdom]
@@ -124,7 +133,7 @@
        (let [^js dom-child-nodes (-> dom .-childNodes)
              {:keys [remove-attrs add-attrs
                      remove-listeners add-listeners
-                     children-diff]} vdom]
+                     children-ops]} vdom]
 
          (doseq [attr remove-attrs]
            (-> dom (.removeAttribute attr)))
@@ -138,70 +147,67 @@
          (doseq [[event-type event-handler] add-listeners]
            (add-listeners dom event-type event-handler))
 
-         (let [move-id->arg1 (extract-move-id->arg1 children-diff)
-               move-id->dom-nodes (-> (reduce (fn [[m index] [op arg1 arg2]]
-                                                (case op
-                                                  (:no-op :remove) [m (+ index arg1)]
-                                                  (:update :insert) [m (+ index (count arg1))]
-                                                  :take [(assoc m arg2 (mapv (fn [index]
-                                                                               (-> dom-child-nodes (.item index)))
-                                                                             (range index (+ index arg1))))
-                                                         (+ index arg2)]
-                                                  :update-take (do
-                                                                 ;; Does the update of the element
-                                                                 (dotimes [i (count arg1)]
-                                                                   (let [^js child-element     (-> dom-child-nodes (.item (+ index i)))
-                                                                         ^js new-child-element (apply-vdom* child-element (nth arg1 i))]
-                                                                     (-> child-element (.replaceWith new-child-element))))
-
-                                                                 ;; TODO: simplify the code?
-                                                                 [(assoc m arg2 (mapv (fn [index]
-                                                                                        (-> dom-child-nodes (.item index)))
-                                                                                      (range index (+ index (count arg1)))))
-                                                                  (+ index arg2)])
-                                                  :put [m (+ index (let [take-arg1 (move-id->arg1 arg1)]
-                                                                     (if (vector? take-arg1)
-                                                                       (count take-arg1)
-                                                                       take-arg1)))]))
+         (let [[move-id->dom-nodes _] (reduce (fn [[move-id->dom-nodes index] operation]
+                                                (case (:type operation)
+                                                  (:no-op :remove) [move-id->dom-nodes (+ index (:size operation))]
+                                                  (:update :insert) [move-id->dom-nodes (+ index (count (:elements operation)))]
+                                                  :take (let [take-size (loop [taken-operations (seq (:operations operation))
+                                                                               i                0]
+                                                                          (if taken-operations
+                                                                            (let [taken-operation (first taken-operations)]
+                                                                              (case (:type taken-operation)
+                                                                                :no-op (recur (next taken-operations) (+ i (:size taken-operation)))
+                                                                                :update (do
+                                                                                          (doseq [[j vdom-diff] (u/seq-indexed (:elements taken-operation))]
+                                                                                            (let [^js child-element     (-> dom-child-nodes (.item (+ index i j)))
+                                                                                                  ^js new-child-element (apply-vdom* child-element vdom-diff)]
+                                                                                              (-> child-element (.replaceWith new-child-element))))
+                                                                                          (recur (next taken-operations) (+ i (count (:elements taken-operation)))))))
+                                                                            i))]
+                                                          ;; Collect the references to the DOM elements.
+                                                          [(assoc move-id->dom-nodes (:move-id operation)
+                                                                  (mapv (fn [index]
+                                                                          (-> dom-child-nodes (.item index)))
+                                                                        (range index (+ index take-size))))
+                                                           (+ index take-size)])
+                                                  :put [move-id->dom-nodes index]))
                                               [{} 0]
-                                              children-diff)
-                                      first)]
-           (loop [operations (seq children-diff)
+                                              children-ops)]
+           (loop [operations (seq children-ops)
                   index 0]
              (when operations
-               (let [[op arg1 arg2] (first operations)
+               (let [operation (first operations)
                      next-operations (next operations)]
-                 (case op
-                   :no-op (recur next-operations (+ index arg1))
+                 (case (:type operation)
+                   :no-op (recur next-operations (+ index (:size operation)))
                    :update (do
-                             (dotimes [i (count arg1)]
+                             (dotimes [i (count (:elements operation))]
                                (let [^js child-element     (-> dom-child-nodes (.item (+ index i)))
-                                     ^js new-child-element (apply-vdom* child-element (nth arg1 i))]
+                                     ^js new-child-element (apply-vdom* child-element (-> (:elements operation) (nth i)))]
                                  (-> child-element (.replaceWith new-child-element))))
-                             (recur next-operations (+ index (count arg1))))
+                             (recur next-operations (+ index (count (:elements operation)))))
                    :remove (do
-                             (dotimes [_ arg1]
+                             (dotimes [_ (:size operation)]
                                (-> dom (.removeChild (-> dom-child-nodes (.item index)))))
                              (recur next-operations index))
                    :insert (do
                              (if (< index (-> dom-child-nodes .-length))
                                (let [node-after (-> dom-child-nodes (.item index))]
-                                 (doseq [child-vdom arg1]
+                                 (doseq [child-vdom (:elements operation)]
                                    (-> dom (.insertBefore (create-dom child-vdom) node-after))))
-                               (doseq [child-vdom arg1]
+                               (doseq [child-vdom (:elements operation)]
                                  (-> dom (.appendChild (create-dom child-vdom)))))
-                             (recur next-operations (+ index (count arg1))))
-                   :take (recur next-operations (+ index arg1))
-                   :update-take (recur next-operations (+ index (count arg1)))
+                             (recur next-operations (+ index (count (:elements operation)))))
+                   :take (recur next-operations (transduce (map (fn [taken-operation]
+                                                                  (case (:type taken-operation)
+                                                                    :no-op (:size taken-operation)
+                                                                    :update (count (:elements taken-operation)))))
+                                                           + index
+                                                           (:operations operation)))
                    :put (let [^js node-to (-> dom-child-nodes (.item index))
-                              take-arg1 (move-id->arg1 arg1)
-                              size (if (vector? take-arg1)
-                                     (count take-arg1)
-                                     take-arg1)
-                              nodes-from (move-id->dom-nodes arg1)]
+                              nodes-from (move-id->dom-nodes (:move-id operation))]
                           (-> node-to .-before (.apply node-to (into-array nodes-from)))
-                          (recur next-operations (+ index size))))))))
-
+                          (recur next-operations (+ index (count nodes-from)))))))))
          dom))))
 
 #?(:cljs
@@ -555,29 +561,6 @@
                                       (conj output base-iop new-iop) ;; new-iop will be discarded in the phase 3
                                       (rest split-new-iops)
                                       (rest split-base-iops)))))))))
-
-
-(defn- transform-orphan-takes-into-removes
-  "Returns the operations where any :take which do not have a matching :put is changed into a :remove.
-   ... also return a transformed move-id->size.
-   This function should be called before index-ops-canonical."
-  [move-id->size iops]
-  (let [orphan-move-ids (set/difference (set (keys move-id->size))
-                                        ;; all the used move-ids
-                                        (->> iops
-                                             (keep (fn [[op-type arg1]]
-                                                     (when (= op-type :put)
-                                                       arg1)))
-                                             set))
-        transformed-iops (into []
-                               (map (fn [[op-type arg1 :as operation]]
-                                      (if (and (= op-type :take)
-                                               (contains? orphan-move-ids arg1))
-                                        [:remove arg1]
-                                        operation)))
-                               iops)
-        transformed-move-id->size (apply dissoc move-id->size orphan-move-ids)]
-    [transformed-move-id->size transformed-iops]))
 
 
 (defn- index-ops-canonical
