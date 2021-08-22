@@ -8,6 +8,21 @@
 (defn render []
   (doto (-> js/document (.getElementById "app"))
     (vdom/apply-vdom (h/hiccup [:main
+                                [:h1 "hello world"]
+                                [:p "Something"]]))
+    (vdom/apply-vdom (vdom/comp {:children-ops [{:type :no-op, :size 2}
+                                                {:type :put, :move-id 0}
+                                                {:type :no-op, :size 1}
+                                                {:type :take
+                                                 :move-id 0
+                                                 :operations [{:type :no-op, :size 1}
+                                                              {:type :update, :elements [(h/hiccup [:li "Foobar"])]}]}]}
+                                (h/hiccup [:ul
+                                           (for [i (range 10)]
+                                             [:li "Item " i])])))
+
+    #_#_#_
+    (vdom/apply-vdom (h/hiccup [:main
                                 [:section
                                  [:h1 {:title "foobar"} "hello, " "world"]
                                  [:p {:style {:color :red}} "This is a paragraph."]

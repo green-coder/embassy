@@ -24,7 +24,7 @@
   ;; - a string: replaces existing node with a text node.
   ;; - a hashmap containing :tag, and optionally :attrs, :listeners and :children.
   ;; - a hashmap without :tag, and optionally :remove-attrs, :add-attrs,
-  ;;   :remove-listeners, :add-listeners, :children-diff and :children-moves.
+  ;;   :remove-listeners, :add-listeners, and :children-ops.
 
   ;; Examples:
 
@@ -227,87 +227,108 @@
 
 (declare comp)
 
+(defn- make-move-id->state
+  "Returns an hashmap of move-id -> {:size n, :operations [op1 op2 ,,,]}"
+  [children-ops move-id-offset]
+  (into {}
+        (keep (fn [child-op]
+                (when (= (:type child-op) :take)
+                  [(+ (:move-id child-op) move-id-offset)
+                   {:size (transduce (map (fn [operation]
+                                            (case (:type operation)
+                                              :no-op (:size operation)
+                                              :update (count (:elements operation)))))
+                                     +
+                                     (:operations child-op))
+                    :operations (:operations child-op)}])))
+        children-ops))
+
+(defn- update-takes-and-puts
+  "Returns a sequence of operations where :take and :put operations will have
+   an updated :move-id and a calculated :size"
+  [children-ops move-id->state move-id-offset]
+  (into []
+        (map (fn [child-op]
+               (case (:type child-op)
+                 (:no-op :update :remove :insert)
+                 child-op
+
+                 :take
+                 (let [move-id (+ (:move-id child-op) move-id-offset)]
+                   (-> child-op
+                       (dissoc :operations)
+                       (assoc :move-id move-id
+                              :size (-> move-id move-id->state :size))))
+
+                 :put
+                 (let [move-id (+ (:move-id child-op) move-id-offset)]
+                   (-> child-op
+                       (assoc :move-id move-id
+                              :size (-> move-id move-id->state :size)))))))
+        children-ops))
+
+
 ;; Different types of fragment:
 ;;
-;; [:no-op size]
+;; {:type :no-op
+;;  :size n}
 ;; From splitting the operation into 2.
 ;;
-;; [:update [vdom-diffs0 vdom-diffs1 ,,,]]
+;; {:type :update
+;;  :elements [[vdom-diffs0 vdom-diffs1 ,,,]}
 ;; From :update then :take or :put then :update.
 ;; At pass 3, the :take is turned into a :update-take.
 ;;
-;; [:remove size]
+;; {:type :remove
+;;  :size n}
 ;; From :put then :remove.
 ;; At pass 3, the :take is replaced by a :remove and the :put is removed.
 ;;
-;; [:insert [vdom0 vdom1 ,,,]]
+;; {:type :insert
+;;  :elements [vdom0 vdom1 ,,,]}
 ;; From :insert then :take.
 ;; At pass 3, the :take is removed and the :put is replaced by an :insert.
 ;;
-;; [:move size new-move-id] (on the old take state)
+;; {:type :move
+;;  :size n
+;;  :new-move-id x} (on the old take state)
 ;; From :put then :take.
 ;; At pass 3, ... things become complicated, the old move take operation has to split into multiple move-id
 ;; around the old part which is put.
 
-;; The output sequence of operations replaced :take, :update-take and :put by this format:
-;; - [:take size id]
-;; - [:put size id]
-(defn- preprocess-moves [iops move-id-offset]
-  (let [move-id->state (into {}
-                             (keep (fn [[op-type size-or-vdom-diffs move-id]]
-                                     (when (or (= op-type :take)
-                                               (= op-type :update-take))
-                                        [(+ move-id move-id-offset)
-                                         (if (vector? size-or-vdom-diffs)
-                                           {:size (count size-or-vdom-diffs)
-                                            :fragments [[:update size-or-vdom-diffs]]}
-                                           {:size size-or-vdom-diffs
-                                            :fragments [[:no-op size-or-vdom-diffs]]})])))
-                             iops)
-        simpler-iops (into []
-                           (map (fn [[op-type arg1 arg2 :as iop]]
-                                  (case op-type
-                                    (:no-op :update :remove :insert)
-                                    iop
-
-                                    (:take :update-take)
-                                    (let [move-id (+ arg2 move-id-offset)]
-                                      [:take (-> move-id move-id->state :size) move-id])
-
-                                    :put
-                                    (let [move-id (+ arg1 move-id-offset)]
-                                      [:put (-> move-id move-id->state :size) move-id]))))
-                           iops)]
-    [move-id->state simpler-iops]))
+;; The output sequence of operations replaced :take and :put by this format:
+;; - {:type :take, :size n, :move-id x}
+;; - {:type :put, :size n, :move-id x}
+(defn- preprocess-moves
+  "Returns [move-id->state simpler-ops] where:
+   - move-id->state contains ...
+   - simpler-ops is ..."
+  [children-ops move-id-offset]
+  (let [move-id->state (make-move-id->state children-ops move-id-offset)
+        children-ops (update-takes-and-puts children-ops move-id->state move-id-offset)]
+    [move-id->state children-ops]))
 
 
-(defn- index-op-size
+(defn- operation-size
   "Returns the size of the operation in number of DOM elements."
-  [[op arg1 _]]
-  (case op
-    (:no-op :remove :take :put)
-    arg1
-
-    (:update :insert)
-    (count arg1)))
+  [operation]
+  (case (:type operation)
+    (:no-op :remove :take :put :move) (:size operation)
+    (:update :insert) (count (:elements operation))))
 
 
 (defn- index-op-split
   "Splits an operation into 2 pieces so that the size of the first piece is the given size,
    and then return a vector containing those 2 pieces."
-  [[op arg1 arg2] size]
-  (case op
-    (:no-op :remove)
-    [[op size]
-     [op (- arg1 size)]]
+  [operation size]
+  (case (:type operation)
+    (:no-op :remove :take :put)
+    [(assoc operation :size size)
+     (update operation :size - size)]
 
     (:update :insert)
-    [[op (subvec arg1 0 size)]
-     [op (subvec arg1 size)]]
-
-    (:take :put)
-    [[op size arg2]
-     [op (- arg1 size) arg2]]))
+    [(update operation :elements subvec 0 size)
+     (update operation :elements subvec size)]))
 
 
 (defn- head-split
@@ -315,8 +336,8 @@
   [new-iops base-iops]
   (let [new-iop (first new-iops)
         base-iop (first base-iops)
-        new-size (index-op-size new-iop)
-        base-size (index-op-size base-iop)]
+        new-size (operation-size new-iop)
+        base-size (operation-size base-iop)]
     (cond
       (= new-size base-size)
       [base-size new-iops base-iops]
@@ -330,60 +351,55 @@
         [base-size (list* new-head new-tail (rest new-iops)) base-iops]))))
 
 
-(defn- fragment-size [[op-type arg1 _]]
-  (case op-type
-    (:no-op :remove :move) arg1
-    (:update :insert) (count arg1)))
-
-
-(defn- sub-fragment [[op-type arg1 arg2 :as fragment] index size]
+(defn- sub-operation [operation index size]
   (when (and (pos? size)
              (<= 0 index)
-             (< index (fragment-size fragment)))
-    (case op-type
-      (:no-op :remove) [op-type size]
-      (:update :insert) [op-type (subvec arg1 index (+ index size))]
-      :move [op-type size arg2])))
+             (< index (operation-size operation)))
+    (case (:type operation)
+      (:no-op :remove :take :put :move) (assoc operation :size size)
+      (:update :insert) (update operation :elements subvec index (+ index size)))))
 
-
+;; FIXME: use the new data format
 (defn- get-fragment [fragments index size]
   (loop [fragments (seq fragments)
          fragment-index 0]
     (when fragments
       (let [fragment (first fragments)
-            fragment-size' (fragment-size fragment)
+            fragment-size' (operation-size fragment)
             int-min-index (max fragment-index index)
             int-max-index (min (+ fragment-index fragment-size') (+ index size))
             f0-size (-> (- (min int-min-index int-max-index) fragment-index) (max 0))
             f1-size (-> (- int-max-index int-min-index) (max 0))
-            f1 (sub-fragment fragment f0-size f1-size)]
+            f1 (sub-operation fragment f0-size f1-size)]
         (if (some? f1)
           f1
           (recur (next fragments)
                  (+ fragment-index fragment-size')))))))
 
 
+;; FIXME: use the new data format
 (defn- update-fragments [fragments index size f]
   (loop [result []
          fragments (seq fragments)
          fragment-index 0]
     (if fragments
       (let [fragment (first fragments)
-            fragment-size' (fragment-size fragment)
+            fragment-size' (operation-size fragment)
             int-min-index (max fragment-index index)
             int-max-index (min (+ fragment-index fragment-size') (+ index size))]
         (recur (let [f0-size (-> (- (min int-min-index int-max-index) fragment-index) (max 0))
                      f1-size (-> (- int-max-index int-min-index) (max 0))
                      f2-size (-> (- (+ fragment-index fragment-size') (max int-min-index int-max-index)) (max 0))
-                     f0 (sub-fragment fragment 0 f0-size)
-                     f1 (some-> (sub-fragment fragment f0-size f1-size) f)
-                     f2 (sub-fragment fragment (+ f0-size f1-size) f2-size)]
+                     f0 (sub-operation fragment 0 f0-size)
+                     f1 (some-> (sub-operation fragment f0-size f1-size) f)
+                     f2 (sub-operation fragment (+ f0-size f1-size) f2-size)]
                  (into result (remove nil?) [f0 f1 f2]))
                (next fragments)
                (+ fragment-index fragment-size')))
       result)))
 
 
+;; FIXME: use the new data format
 (defn- append-last-operations [move-id->state output iops]
   [(reduce (fn [move-id->state [op-type arg1 arg2]]
              (case op-type
@@ -395,6 +411,7 @@
    (into output iops)])
 
 
+;; FIXME: use the new data format
 (defn- index-ops-comp
   "Composes 2 sequences of index operations, and return the result.
    Note 2: the result is not guaranteed to be canonical/normalized."
@@ -563,6 +580,7 @@
                                       (rest split-base-iops)))))))))
 
 
+;; FIXME: use the new data format
 (defn- index-ops-canonical
   "Transform a sequence of index operations into its canonical form.
    The goal is to regroup operations with the same type, as well as to order the
@@ -607,30 +625,72 @@
      ;; vdom2 applies on vdom1's content
      (contains? vdom1 :tag)
      (let [attrs (-> (:attrs vdom1)
-                     (reduce dissoc (:remove-attrs vdom2))
+                     (as-> xxx (reduce dissoc xxx (:remove-attrs vdom2)))
                      (into (:add-attrs vdom2)))
            listeners (-> (:listeners vdom1)
-                         (reduce dissoc (:remove-listeners vdom2))
+                         (as-> xxx (reduce dissoc xxx (:remove-listeners vdom2)))
                          (into (:add-listeners vdom2)))
+           children-ops (:children-ops vdom2)
+
+           ;; Pass 1, preprocess
+           move-id->state (make-move-id->state children-ops 0)
+           children-ops (update-takes-and-puts children-ops move-id->state 0)
+
+           ;; Pass 2, apply the updates on the moved elements and store them in (:elements move-state)
+           move-id->state (loop [move-id->state move-id->state
+                                 children-in  (:children vdom1)
+                                 children-ops (seq children-ops)]
+                            (if children-ops
+                              (let [child-op (first children-ops)]
+                                (recur (if (= (:type child-op) :take)
+                                         (let [updated-elements (loop [operations (seq (-> child-op :move-id move-id->state :operations))
+                                                                       children-in children-in
+                                                                       elements []]
+                                                                  (if operations
+                                                                    (let [operation (first operations)
+                                                                          size (operation-size operation)]
+                                                                      (recur (next operations)
+                                                                             (subvec children-in size)
+                                                                             (->> (case (:type operation)
+                                                                                    :no-op (subvec children-in 0 size)
+                                                                                    :update (mapv comp (:elements operation) children-in))
+                                                                                  (into elements))))
+                                                                    elements))]
+                                           (assoc-in move-id->state [(:move-id child-op) :elements] updated-elements))
+                                         move-id->state)
+                                       (case (:type child-op)
+                                         (:no-op :remove :take) (subvec children-in (:size child-op))
+                                         :update (subvec children-in (count (:elements child-op)))
+                                         (:insert :put) children-in)
+                                       (next children-ops)))
+                              move-id->state))
+
+           ;; Pass 3, apply all the operations except the :take ones.
            children (loop [children-out []
                            children-in  (:children vdom1)
-                           operations   (seq (:children-diff vdom2))]
-                      (if operations
-                        (let [[op arg] (first operations)
-                              next-operations (next operations)]
-                          (case op
-                            :no-op (recur (into children-out (take arg) children-in)
-                                          (subvec children-in arg)
-                                          next-operations)
-                            :update (recur (into children-out (mapv comp arg children-in))
-                                           (subvec children-in (count arg))
-                                           next-operations)
+                           children-ops (seq children-ops)]
+                      (if children-ops
+                        (let [child-op (first children-ops)
+                              next-children-ops (next children-ops)]
+                          (case (:type child-op)
+                            :no-op (recur (into children-out (take (:size child-op)) children-in)
+                                          (subvec children-in (:size child-op))
+                                          next-children-ops)
+                            :update (recur (into children-out (mapv comp (:elements child-op) children-in))
+                                           (subvec children-in (count (:elements child-op)))
+                                           next-children-ops)
                             :remove (recur children-out
-                                           (subvec children-in arg)
-                                           next-operations)
-                            :insert (recur (into children-out arg)
+                                           (subvec children-in (:size child-op))
+                                           next-children-ops)
+                            :insert (recur (into children-out (:elements child-op))
                                            children-in
-                                           next-operations)))
+                                           next-children-ops)
+                            :take (recur children-out
+                                         (subvec children-in (:size child-op))
+                                         next-children-ops)
+                            :put (recur (into children-out (-> child-op :move-id move-id->state :elements))
+                                        children-in
+                                        next-children-ops)))
                         (into children-out children-in)))]
        (cond-> {:tag (:tag vdom1)}
          (some? attrs) (assoc :attrs attrs)
@@ -643,12 +703,12 @@
             add-attrs1        :add-attrs
             remove-listeners1 :remove-listeners
             add-listeners1    :add-listeners
-            children-diff1    :children-diff} vdom1
+            children-ops1     :children-ops} vdom1
            {remove-attrs2     :remove-attrs
             add-attrs2        :add-attrs
             remove-listeners2 :remove-listeners
             add-listeners2    :add-listeners
-            children-diff2    :children-diff} vdom2
+            children-ops2     :children-ops} vdom2
            remove-attrs (-> remove-attrs1
                             (set/union remove-attrs2)
                             (as-> xxx (reduce disj xxx (keys add-attrs2))))
@@ -662,14 +722,14 @@
                              (into add-listeners2))
            ;; - Pass 1 -
            ;; Collect the information about the :take operations
-           [move-id->state1 children-diff1] (preprocess-moves children-diff1 0)
-           [move-id->state2 children-diff2] (preprocess-moves children-diff2 (count move-id->state1))
+           [move-id->state1 children-ops1] (preprocess-moves children-ops1 0)
+           [move-id->state2 children-ops2] (preprocess-moves children-ops2 (count move-id->state1))
 
            ;; - Pass 2 -
            ;; Merge 2 sequences of operations into 1 sequence.
            ;; Enrich the take states. In the output, [:take size id] and [:put size id].
-           [move-id->state children-diff] (index-ops-comp move-id->state2 children-diff2
-                                                          move-id->state1 children-diff1)
+           [move-id->state children-ops] (index-ops-comp move-id->state2 children-ops2
+                                                         move-id->state1 children-ops1)
 
            ;; - Pass 3 -
            ;; Get rid or replace the [:take size id] and [:put size id] operations based on the take states.
@@ -678,14 +738,14 @@
 
            ;; - Pass 4 -
            ;; Defragment the sequence of all the vdom-diff operations.
-           defragmented-children-diff (index-ops-canonical children-diff)]
+           defragmented-children-diff (index-ops-canonical children-ops)]
        (-> {}
            (cond->
              (seq remove-attrs) (assoc :remove-attrs remove-attrs)
              (seq add-attrs) (assoc :add-attrs add-attrs)
              (seq remove-listeners) (assoc :remove-listeners remove-listeners)
              (seq add-listeners) (assoc :add-listeners add-listeners)
-             (seq children-diff) (assoc :children-diff defragmented-children-diff))
+             (seq children-ops) (assoc :children-ops defragmented-children-diff))
            not-empty))))
   ([vdom2 vdom1 & more-vdoms]
    (reduce comp (comp vdom2 vdom1) more-vdoms)))
