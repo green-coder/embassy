@@ -5,30 +5,7 @@
             [ambassy.vdom.helper :as h]))
 
 
-(deftest preprocess-moves-test
-  (is (= [{}
-          [[:no-op 2] [:remove 5]]]
-         (#'vdom/preprocess-moves (-> (h/remove 2 5) :children-diff) 0)))
-
-  (is (= [{0 {:size      5
-              :fragments [[:no-op 5]]}}
-          [[:no-op 2] [:take 5 0] [:no-op 3] [:put 5 0]]]
-         (#'vdom/preprocess-moves (-> (h/move 2 5 10) :children-diff) 0)))
-
-  (is (= [{10 {:size      5
-               :fragments [[:no-op 5]]}}
-          [[:no-op 2] [:take 5 10] [:no-op 3] [:put 5 10]]]
-         (#'vdom/preprocess-moves (-> (h/move 2 5 10) :children-diff) 10)))
-
-  (is (= [{0 {:size      5
-              :fragments [[:update [:a :b :c :d :e]]]}}
-          [[:no-op 2] [:take 5 0] [:no-op 3] [:put 5 0]]]
-         (#'vdom/preprocess-moves [[:no-op 2]
-                                   [:update-take [:a :b :c :d :e] 0]
-                                   [:no-op 3]
-                                   [:put 0]] 0))))
-
-
+#_
 (deftest index-op-size-test
   (is (= 3 (#'vdom/index-op-size [:no-op 3])))
   (is (= 3 (#'vdom/index-op-size [:update [1 2 3]])))
@@ -38,6 +15,7 @@
   (is (= 3 (#'vdom/index-op-size [:put 3 0]))))
 
 
+#_
 (deftest index-op-split-test
   (is (= [[:no-op 2] [:no-op 1]]
          (#'vdom/index-op-split [:no-op 3] 2)))
@@ -53,6 +31,7 @@
          (#'vdom/index-op-split [:put 3 'id] 2))))
 
 
+#_
 (deftest head-split-test
   (is (= [2
           [[:remove 2] [:remove 1] [:no-op 2]]
@@ -76,6 +55,7 @@
                             [[:take 6 0]]))))
 
 
+#_
 (deftest get-fragment-test
   (is (= [:no-op 3]
          (#'vdom/get-fragment [[:no-op 6]]
@@ -102,6 +82,7 @@
            8 2))))
 
 
+#_
 (deftest update-fragments-test
   (testing "Splits a fragment into 3 pieces, updates the middle piece."
     (is (= [[:no-op 2] [:foobar 3] [:no-op 1]]
@@ -139,6 +120,7 @@
              (fn [operation] (assoc operation 0 :foobar)))))))
 
 
+#_
 (deftest index-ops-comp-test
   (is (= [{}
           [[:no-op 1] [:remove 1] [:remove 1] [:no-op 1] [:insert [1 2 3]]]]
@@ -231,6 +213,7 @@
            [[:take 2 0] [:no-op 4] [:put 2 0]]))))
 
 
+#_
 (deftest index-ops-canonical-test
   (are [index-ops expected-result]
     (= expected-result (#'vdom/index-ops-canonical index-ops))
@@ -250,3 +233,21 @@
     [[:no-op 1] [:no-op 1]]
     [[:no-op 2]]))
 
+(deftest comp-text
+  (is (= {:tag "ul",
+          :children [{:tag "li", :children ["Item " "0"]}
+                     {:tag "li", :children ["Item " "1"]}
+                     {:tag "li", :children ["Item " "3"]}
+                     {:tag "li", :children ["Foobar"]}
+                     {:tag "li", :children ["Item " "2"]}
+                     {:tag "li", :children ["Item " "5"]}]}
+         (#'vdom/comp {:children-ops [{:type :no-op, :size 2}
+                                      {:type :put, :move-id 0}
+                                      {:type :no-op, :size 1}
+                                      {:type :take
+                                       :move-id 0
+                                       :operations [{:type :no-op, :size 1}
+                                                    {:type :update, :elements [(h/hiccup [:li "Foobar"])]}]}]}
+                      (h/hiccup [:ul
+                                 (for [i (range 6)]
+                                   [:li "Item " i])])))))

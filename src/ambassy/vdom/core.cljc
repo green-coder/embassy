@@ -227,6 +227,7 @@
 
 (declare comp)
 
+
 (defn- make-move-id->state
   "Returns an hashmap of move-id -> {:size n, :operations [op1 op2 ,,,]}"
   [children-ops move-id-offset]
@@ -268,7 +269,7 @@
         children-ops))
 
 
-;; Different types of fragment:
+;; Different types of taken operations:
 ;;
 ;; {:type :no-op
 ;;  :size n}
@@ -299,14 +300,7 @@
 ;; The output sequence of operations replaced :take and :put by this format:
 ;; - {:type :take, :size n, :move-id x}
 ;; - {:type :put, :size n, :move-id x}
-(defn- preprocess-moves
-  "Returns [move-id->state simpler-ops] where:
-   - move-id->state contains ...
-   - simpler-ops is ..."
-  [children-ops move-id-offset]
-  (let [move-id->state (make-move-id->state children-ops move-id-offset)
-        children-ops (update-takes-and-puts children-ops move-id->state move-id-offset)]
-    [move-id->state children-ops]))
+
 
 
 (defn- operation-size
@@ -315,6 +309,15 @@
   (case (:type operation)
     (:no-op :remove :take :put :move) (:size operation)
     (:update :insert) (count (:elements operation))))
+
+
+(defn- sub-operation [operation index size]
+  (when (and (pos? size)
+             (<= 0 index)
+             (< index (operation-size operation)))
+    (case (:type operation)
+      (:no-op :remove :take :put :move) (assoc operation :size size)
+      (:update :insert) (update operation :elements subvec index (+ index size)))))
 
 
 (defn- index-op-split
@@ -351,72 +354,60 @@
         [base-size (list* new-head new-tail (rest new-iops)) base-iops]))))
 
 
-(defn- sub-operation [operation index size]
-  (when (and (pos? size)
-             (<= 0 index)
-             (< index (operation-size operation)))
-    (case (:type operation)
-      (:no-op :remove :take :put :move) (assoc operation :size size)
-      (:update :insert) (update operation :elements subvec index (+ index size)))))
-
-;; FIXME: use the new data format
-(defn- get-fragment [fragments index size]
-  (loop [fragments (seq fragments)
-         fragment-index 0]
-    (when fragments
-      (let [fragment (first fragments)
-            fragment-size' (operation-size fragment)
-            int-min-index (max fragment-index index)
-            int-max-index (min (+ fragment-index fragment-size') (+ index size))
-            f0-size (-> (- (min int-min-index int-max-index) fragment-index) (max 0))
-            f1-size (-> (- int-max-index int-min-index) (max 0))
-            f1 (sub-operation fragment f0-size f1-size)]
+(defn- get-sub-op [ops index size]
+  (loop [ops      (seq ops)
+         op-index 0]
+    (when ops
+      (let [op            (first ops)
+            op-size       (operation-size op)
+            int-min-index (max op-index index)
+            int-max-index (min (+ op-index op-size) (+ index size))
+            f0-size       (-> (- (min int-min-index int-max-index) op-index) (max 0))
+            f1-size       (-> (- int-max-index int-min-index) (max 0))
+            f1            (sub-operation op f0-size f1-size)]
         (if (some? f1)
           f1
-          (recur (next fragments)
-                 (+ fragment-index fragment-size')))))))
+          (recur (next ops)
+                 (+ op-index op-size)))))))
 
 
-;; FIXME: use the new data format
-(defn- update-fragments [fragments index size f]
-  (loop [result []
-         fragments (seq fragments)
-         fragment-index 0]
-    (if fragments
-      (let [fragment (first fragments)
-            fragment-size' (operation-size fragment)
-            int-min-index (max fragment-index index)
-            int-max-index (min (+ fragment-index fragment-size') (+ index size))]
-        (recur (let [f0-size (-> (- (min int-min-index int-max-index) fragment-index) (max 0))
+(defn- update-taken-operations [ops index size f]
+  (loop [result   []
+         ops      (seq ops)
+         op-index 0]
+    (if ops
+      (let [op            (first ops)
+            op-size       (operation-size op)
+            int-min-index (max op-index index)
+            int-max-index (min (+ op-index op-size) (+ index size))]
+        (recur (let [f0-size (-> (- (min int-min-index int-max-index) op-index) (max 0))
                      f1-size (-> (- int-max-index int-min-index) (max 0))
-                     f2-size (-> (- (+ fragment-index fragment-size') (max int-min-index int-max-index)) (max 0))
-                     f0 (sub-operation fragment 0 f0-size)
-                     f1 (some-> (sub-operation fragment f0-size f1-size) f)
-                     f2 (sub-operation fragment (+ f0-size f1-size) f2-size)]
+                     f2-size (-> (- (+ op-index op-size) (max int-min-index int-max-index)) (max 0))
+                     f0      (sub-operation op 0 f0-size)
+                     f1      (some-> (sub-operation op f0-size f1-size) f)
+                     f2      (sub-operation op (+ f0-size f1-size) f2-size)]
                  (into result (remove nil?) [f0 f1 f2]))
-               (next fragments)
-               (+ fragment-index fragment-size')))
+               (next ops)
+               (+ op-index op-size)))
       result)))
 
 
-;; FIXME: use the new data format
-(defn- append-last-operations [move-id->state output iops]
-  [(reduce (fn [move-id->state [op-type arg1 arg2]]
-             (case op-type
-               :take (update-in move-id->state [arg2 :take-index] + arg1)
-               :put (update-in move-id->state [arg2 :put-index] + arg1)
+(defn- append-last-operations [move-id->state output children-ops]
+  [(reduce (fn [move-id->state child-op]
+             (case (:type child-op)
+               :take (update-in move-id->state [(:move-id child-op) :take-index] + (:size child-op))
+               :put (update-in move-id->state [(:move-id child-op) :put-index] + (:size child-op))
                move-id->state))
            move-id->state
-           iops)
-   (into output iops)])
+           children-ops)
+   (into output children-ops)])
 
 
-;; FIXME: use the new data format
 (defn- index-ops-comp
   "Composes 2 sequences of index operations, and return the result.
    Note 2: the result is not guaranteed to be canonical/normalized."
-  [new-move-id->state new-iops
-   base-move-id->state base-iops]
+  [new-move-id->state new-ops
+   base-move-id->state base-ops]
   (loop [output-move-id->state (into {}
                                      (map (fn [[move-id state]]
                                             [move-id (assoc state
@@ -424,163 +415,170 @@
                                                        :put-index 0)]))
                                      (concat base-move-id->state new-move-id->state))
          output []
-         new-iops new-iops
-         base-iops base-iops]
+         new-ops new-ops
+         base-ops base-ops]
     (cond
-      (empty? base-iops) (append-last-operations output-move-id->state output new-iops)
-      (empty? new-iops) (append-last-operations output-move-id->state output base-iops)
-      :else (let [[op-size split-new-iops split-base-iops] (head-split new-iops base-iops)
-                  [new-op new-arg1 new-arg2 :as new-iop] (first split-new-iops)
-                  [base-op base-arg1 base-arg2 :as base-iop] (first split-base-iops)]
-              (case new-op
+      (empty? base-ops) (append-last-operations output-move-id->state output new-ops)
+      (empty? new-ops) (append-last-operations output-move-id->state output base-ops)
+      :else (let [[op-size split-new-ops split-base-ops] (head-split new-ops base-ops)
+                  new-op  (first split-new-ops)
+                  base-op (first split-base-ops)]
+              (case (:type new-op)
                 :insert
                 (recur output-move-id->state
-                       (conj output new-iop)
-                       (rest split-new-iops)
-                       split-base-iops)
+                       (conj output new-op)
+                       (rest split-new-ops)
+                       split-base-ops)
 
                 :put
-                (recur (update-in output-move-id->state [new-arg2 :put-index] + op-size)
-                       (conj output new-iop)
-                       (rest split-new-iops)
-                       split-base-iops)
+                (recur (update-in output-move-id->state [(:move-id new-op) :put-index] + op-size)
+                       (conj output new-op)
+                       (rest split-new-ops)
+                       split-base-ops)
 
                 ;; case's else
-                (case base-op
+                (case (:type base-op)
                   :no-op
-                  (recur (case new-op
-                           :take (update-in output-move-id->state [new-arg2 :take-index] + op-size)
-                           :put (update-in output-move-id->state [new-arg2 :put-index] + op-size)
+                  (recur (case (:type new-op)
+                           :take (update-in output-move-id->state [(:move-id new-op) :take-index] + op-size)
+                           :put (update-in output-move-id->state [(:move-id new-op) :put-index] + op-size)
                            output-move-id->state)
-                         (conj output new-iop)
-                         (rest split-new-iops)
-                         (rest split-base-iops))
+                         (conj output new-op)
+                         (rest split-new-ops)
+                         (rest split-base-ops))
 
                   :remove
                   (recur output-move-id->state
-                         (conj output base-iop)
-                         split-new-iops
-                         (rest split-base-iops))
+                         (conj output base-op)
+                         split-new-ops
+                         (rest split-base-ops))
 
                   :take
-                  (recur (update-in output-move-id->state [base-arg2 :take-index] + op-size)
-                         (conj output base-iop)
-                         split-new-iops
-                         (rest split-base-iops))
+                  (recur (update-in output-move-id->state [(:move-id base-op) :take-index] + op-size)
+                         (conj output base-op)
+                         split-new-ops
+                         (rest split-base-ops))
 
                   :update
-                  (case new-op
+                  (case (:type new-op)
                     :no-op
                     (recur output-move-id->state
-                           (conj output base-iop)
-                           (rest split-new-iops)
-                           (rest split-base-iops))
+                           (conj output base-op)
+                           (rest split-new-ops)
+                           (rest split-base-ops))
 
                     :update
                     (recur output-move-id->state
-                           (conj output [:update (mapv comp new-arg1 base-arg1)])
-                           (rest split-new-iops)
-                           (rest split-base-iops))
+                           (conj output {:type :update
+                                         :elements (mapv comp (:elements new-op) (:elements base-op))})
+                           (rest split-new-ops)
+                           (rest split-base-ops))
 
                     :remove
                     (recur output-move-id->state
-                           (conj output new-iop)
-                           (rest split-new-iops)
-                           (rest split-base-iops))
+                           (conj output new-op)
+                           (rest split-new-ops)
+                           (rest split-base-ops))
 
                     :take
-                    (recur (update output-move-id->state new-arg2
-                                   (fn [{:keys [take-index] :as state}]
-                                     (-> state
+                    (recur (update output-move-id->state (:move-id new-op)
+                                   (fn [{:keys [take-index] :as move-state}]
+                                     (-> move-state
                                          (update :take-index + op-size)
-                                         (update :fragments update-fragments take-index op-size
-                                                 (fn [[fragment-type fragment-arg]]
-                                                   (case fragment-type
-                                                     :no-op base-iop
-                                                     :update [:update (mapv comp fragment-arg base-arg1)]))))))
-                           (conj output new-iop)
-                           (rest split-new-iops)
-                           (rest split-base-iops)))
+                                         (update :operations update-taken-operations take-index op-size
+                                                 (fn [taken-op]
+                                                   (case (:type taken-op)
+                                                     :no-op base-op
+                                                     :update {:type :update
+                                                              :elements (mapv comp (:elements taken-op) (:elements base-op))}))))))
+                           (conj output new-op)
+                           (rest split-new-ops)
+                           (rest split-base-ops)))
 
-                  :insert (case new-op
+                  :insert (case (:type new-op)
                             :no-op (recur output-move-id->state
-                                          (conj output base-iop)
-                                          (rest split-new-iops)
-                                          (rest split-base-iops))
+                                          (conj output base-op)
+                                          (rest split-new-ops)
+                                          (rest split-base-ops))
                             :update (recur output-move-id->state
-                                           (conj output [:insert (mapv comp new-arg1 base-arg1)])
-                                           (rest split-new-iops)
-                                           (rest split-base-iops))
+                                           (conj output {:type :insert
+                                                         :elements (mapv comp (:elements new-op) (:elements base-op))})
+                                           (rest split-new-ops)
+                                           (rest split-base-ops))
                             :remove (recur output-move-id->state
                                            output
-                                           (rest split-new-iops)
-                                           (rest split-base-iops))
-                            :take (recur (update output-move-id->state new-arg2
-                                                 (fn [{:keys [take-index] :as state}]
-                                                   (-> state
+                                           (rest split-new-ops)
+                                           (rest split-base-ops))
+                            :take (recur (update output-move-id->state (:move-id new-op)
+                                                 (fn [{:keys [take-index] :as move-state}]
+                                                   (-> move-state
                                                        (update :take-index + op-size)
-                                                       (update :fragments update-fragments take-index op-size
-                                                               (fn [[fragment-type fragment-arg]]
-                                                                 (case fragment-type
-                                                                   :no-op base-iop
-                                                                   :update [:insert (mapv comp fragment-arg base-arg1)]))))))
-                                         (conj output new-iop)
-                                         (rest split-new-iops)
-                                         (rest split-base-iops)))
-                  :put (case new-op
-                         :no-op (recur (update-in output-move-id->state [base-arg2 :put-index] + op-size)
-                                       (conj output base-iop)
-                                       (rest split-new-iops)
-                                       (rest split-base-iops))
-                         :update (recur (update output-move-id->state base-arg2
-                                                (fn [{:keys [put-index] :as state}]
-                                                  (-> state
+                                                       (update :operations update-taken-operations take-index op-size
+                                                               (fn [taken-op]
+                                                                 (case (:type taken-op)
+                                                                   :no-op base-op
+                                                                   :update {:type :insert
+                                                                            :elements (mapv comp (:elements taken-op) (:elements base-op))}))))))
+                                         (conj output new-op)
+                                         (rest split-new-ops)
+                                         (rest split-base-ops)))
+                  :put (case (:type new-op)
+                         :no-op (recur (update-in output-move-id->state [(:move-id base-op) :put-index] + op-size)
+                                       (conj output base-op)
+                                       (rest split-new-ops)
+                                       (rest split-base-ops))
+                         :update (recur (update output-move-id->state (:move-id base-op)
+                                                (fn [{:keys [put-index] :as move-state}]
+                                                  (-> move-state
                                                       (update :put-index + op-size)
-                                                      (update :fragments update-fragments put-index op-size
-                                                              (fn [[fragment-type fragment-arg]]
-                                                                (case fragment-type
-                                                                  :no-op new-iop
-                                                                  :update [:update (mapv comp new-arg1 fragment-arg)]))))))
-                                        (conj output base-iop)
-                                        (rest split-new-iops)
-                                        (rest split-base-iops))
-                         :remove (recur (update output-move-id->state base-arg2
-                                                (fn [{:keys [put-index] :as state}]
-                                                  (-> state
+                                                      (update :operations update-taken-operations put-index op-size
+                                                              (fn [taken-op]
+                                                                (case (:type taken-op)
+                                                                  :no-op new-op
+                                                                  :update {:type :update
+                                                                           :elements (mapv comp (:elements new-op) (:elements taken-op))}))))))
+                                        (conj output base-op)
+                                        (rest split-new-ops)
+                                        (rest split-base-ops))
+                         :remove (recur (update output-move-id->state (:move-id base-op)
+                                                (fn [{:keys [put-index] :as move-state}]
+                                                  (-> move-state
                                                       (update :put-index + op-size)
-                                                      (update :fragments update-fragments put-index op-size
-                                                              (fn [_] new-iop)))))
-                                        (conj output base-iop)
-                                        (rest split-new-iops)
-                                        (rest split-base-iops))
+                                                      (update :operations update-taken-operations put-index op-size
+                                                              (fn [_] new-op)))))
+                                        (conj output base-op)
+                                        (rest split-new-ops)
+                                        (rest split-base-ops))
                          :take (recur (-> output-move-id->state
-                                          (update base-arg2
-                                                  (fn [{:keys [put-index] :as state}]
-                                                    (-> state
+                                          (update (:move-id base-op)
+                                                  (fn [{:keys [put-index] :as move-state}]
+                                                    (-> move-state
                                                         (update :put-index + op-size)
-                                                        (update :fragments update-fragments put-index op-size
-                                                                (fn [[base-frag-type base-frag-arg :as base-frag]]
-                                                                  (let [new-take-state (output-move-id->state new-arg2)
-                                                                        [new-frag-type new-frag-arg :as new-frag] (get-fragment (:fragments new-take-state)
-                                                                                                                                (:take-index new-take-state)
-                                                                                                                                op-size)]
-                                                                    (case [new-frag-type base-frag-type]
-                                                                      [:no-op :no-op] base-frag
-                                                                      [:no-op :update] base-frag
+                                                        (update :operations update-taken-operations put-index op-size
+                                                                (fn [base-op]
+                                                                  (let [new-move-state (output-move-id->state (:move-id new-op))
+                                                                        new-frag       (get-sub-op (:operations new-move-state)
+                                                                                                   (:take-index new-move-state)
+                                                                                                   op-size)]
+                                                                    (case [(:type new-frag) (:type base-op)]
+                                                                      [:no-op :no-op] base-op
+                                                                      [:no-op :update] base-op
                                                                       [:update :no-op] new-frag
-                                                                      [:update :update] [:update (mapv comp new-frag-arg base-frag-arg)])))))))
-                                          (update new-arg2
+                                                                      [:update :update] [:update (mapv comp (:elements new-frag) (:elements base-op))])))))))
+                                          (update (:move-id new-op)
                                                   (fn [{:keys [take-index] :as state}]
                                                     (-> state
                                                         (update :take-index + op-size)
-                                                        (update :fragments update-fragments take-index op-size
-                                                                (fn [_] [:do-not-take op-size]))))))
-                                      (conj output base-iop new-iop) ;; new-iop will be discarded in the phase 3
-                                      (rest split-new-iops)
-                                      (rest split-base-iops)))))))))
+                                                        (update :operations update-taken-operations take-index op-size
+                                                                (fn [_] {:type :do-not-take
+                                                                         :size op-size}))))))
+                                      (conj output base-op new-op) ;; new-iop will be discarded in the phase 3
+                                      (rest split-new-ops)
+                                      (rest split-base-ops)))))))))
 
 
 ;; FIXME: use the new data format
+#_
 (defn- index-ops-canonical
   "Transform a sequence of index operations into its canonical form.
    The goal is to regroup operations with the same type, as well as to order the
@@ -721,13 +719,17 @@
                              (as-> xxx (reduce dissoc xxx remove-listeners2))
                              (into add-listeners2))
            ;; - Pass 1 -
-           ;; Collect the information about the :take operations
-           [move-id->state1 children-ops1] (preprocess-moves children-ops1 0)
-           [move-id->state2 children-ops2] (preprocess-moves children-ops2 (count move-id->state1))
+           ;; 1. Collect the information about the :take operations
+           ;; 2. Offset the move-id when needed and add the :size to the :take and :put
+           move-id->state1 (make-move-id->state children-ops1 0)
+           children-ops1 (update-takes-and-puts children-ops1 move-id->state1 0)
+
+           move-id-offset (count move-id->state1)
+           move-id->state2 (make-move-id->state children-ops2 move-id-offset)
+           children-ops2 (update-takes-and-puts children-ops2 move-id->state2 move-id-offset)
 
            ;; - Pass 2 -
            ;; Merge 2 sequences of operations into 1 sequence.
-           ;; Enrich the take states. In the output, [:take size id] and [:put size id].
            [move-id->state children-ops] (index-ops-comp move-id->state2 children-ops2
                                                          move-id->state1 children-ops1)
 
@@ -738,7 +740,7 @@
 
            ;; - Pass 4 -
            ;; Defragment the sequence of all the vdom-diff operations.
-           defragmented-children-diff (index-ops-canonical children-ops)]
+           defragmented-children-diff (-> children-ops #_index-ops-canonical)]
        (-> {}
            (cond->
              (seq remove-attrs) (assoc :remove-attrs remove-attrs)
