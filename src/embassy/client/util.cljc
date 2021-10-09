@@ -1,4 +1,4 @@
-(ns ambassy.client.util
+(ns embassy.client.util
   (:refer-clojure :exclude [get-in]))
 
 #?(:cljs

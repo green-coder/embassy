@@ -1,4 +1,4 @@
-## Ambassy
+## Embassy
 
 ## How to run
 

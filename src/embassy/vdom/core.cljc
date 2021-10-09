@@ -1,9 +1,9 @@
-(ns ambassy.vdom.core
+(ns embassy.vdom.core
   (:refer-clojure :exclude [comp])
   (:require
     [clojure.core :as cc]
     [clojure.set :as set]
-    [ambassy.client.util :as u]))
+    [embassy.client.util :as u]))
 
 ;; Things to do:
 ;; [x] Add support for the on-xxx.

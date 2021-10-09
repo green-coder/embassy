@@ -1,9 +1,9 @@
-(ns ambassy.client.core
+(ns embassy.client.core
   (:require
     [lambdaisland.dom-types]
-    [ambassy.vdom.core :as vdom]
-    [ambassy.vdom.helper :as h]
-    [ambassy.client.util :as u]))
+    [embassy.vdom.core :as vdom]
+    [embassy.vdom.helper :as h]
+    [embassy.client.util :as u]))
 
 (defn render []
   (doto (-> js/document (.getElementById "app"))

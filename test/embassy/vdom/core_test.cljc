@@ -1,8 +1,8 @@
-(ns ambassy.vdom.core-test
+(ns embassy.vdom.core-test
   (:require #?(:clj  [clojure.test :refer [deftest testing is are]]
                :cljs [cljs.test :refer [deftest testing is are] :include-macros true])
-            [ambassy.vdom.core :as vdom]
-            [ambassy.vdom.helper :as h]))
+            [embassy.vdom.core :as vdom]
+            [embassy.vdom.helper :as h]))
 
 
 #_

@@ -1,10 +1,10 @@
-(ns ambassy.vdom.helper
+(ns embassy.vdom.helper
   (:refer-clojure :exclude [update remove update-in])
   (:require
     [clojure.string :as str]
     [camel-snake-kebab.core :as csk]
-    [ambassy.vdom.core :as vdom]
-    [ambassy.client.util :as u]))
+    [embassy.vdom.core :as vdom]
+    [embassy.client.util :as u]))
 
 (defn hiccup [x]
   (cond
