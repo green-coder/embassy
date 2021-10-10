@@ -9,6 +9,9 @@
 ;; This is a vdom which, when applied on a dom element, does not change it.
 (def identity-vdom nil)
 
+;; A vdom representing a value to be removed, used for removing a root dom element.
+(def removed-vdom {:tag nil})
+
 (defn hiccup [x]
   (cond
     (vector? x)
@@ -112,40 +115,24 @@
                                 :move-id 0})))}))
 
 (defn update-in [path vdom & more-vdoms]
-  (if (seq path)
+  (when (seq path)
     (let [[last-path & reversed-path] (reverse path)]
       (reduce (fn [vdom index]
                 (update index vdom))
               (apply update last-path vdom more-vdoms)
-              reversed-path))
-    ;; Act like the identity function
-    vdom))
+              reversed-path))))
 
 (defn insert-in [path vdom & more-vdoms]
-  (if (seq path)
-    (let [last-path (last path)
-          butlast-path (butlast path)]
-      (update-in butlast-path (apply insert last-path vdom more-vdoms)))
-    ;; Replace anything with the given vdom value
-    vdom))
+  (when (seq path)
+    (update-in (butlast path) (apply insert (last path) vdom more-vdoms))))
 
 (defn remove-in [path size]
-  (if (seq path)
-    (let [last-path (last path)
-          butlast-path (butlast path)]
-      (update-in butlast-path (remove last-path size)))
-    (if (zero? size)
-      ;; The absence of change
-      nil
-      ;; The great /dev/null operator - this dom element needs to be deleted.
-      {:tag nil})))
+  (when (seq path)
+    (update-in (butlast path) (remove (last path) size))))
 
 (defn move-in [path size to-index]
-  (if (seq path)
-    (let [last-path (last path)
-          butlast-path (butlast path)]
-      (update-in butlast-path (apply move last-path size to-index)))
-    identity-vdom))
+  (when (seq path)
+    (update-in (butlast path) (move (last path) size to-index))))
 
 (defn comp-in-> [path & vdoms]
   (update-in path (apply vdom/comp-> vdoms)))
