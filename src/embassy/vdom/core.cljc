@@ -211,13 +211,13 @@
          dom))))
 
 #?(:cljs
-   (defn apply-vdom [^js app-element vdom]
+   (defn apply-vdom [^js dom-element vdom]
      ;; Ensures that we have a "root" node under app-element.
-     (when (zero? (-> app-element .-childNodes .-length))
-       (-> app-element (.appendChild (create-dom ""))))
+     (when (zero? (-> dom-element .-childNodes .-length))
+       (-> dom-element (.appendChild (create-dom ""))))
 
      ;; Apply the vdom
-     (let [current-dom-root (-> app-element .-firstChild)
+     (let [current-dom-root (-> dom-element .-firstChild)
            new-dom-root (apply-vdom* current-dom-root vdom)]
        (-> current-dom-root (.replaceWith new-dom-root)))))
 

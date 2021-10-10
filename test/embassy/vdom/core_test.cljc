@@ -233,7 +233,7 @@
     [[:no-op 1] [:no-op 1]]
     [[:no-op 2]]))
 
-(deftest comp-text
+(deftest comp-test
   (is (= {:tag "ul",
           :children [{:tag "li", :children ["Item " "0"]}
                      {:tag "li", :children ["Item " "1"]}
@@ -241,13 +241,13 @@
                      {:tag "li", :children ["Foobar"]}
                      {:tag "li", :children ["Item " "2"]}
                      {:tag "li", :children ["Item " "5"]}]}
-         (#'vdom/comp {:children-ops [{:type :no-op, :size 2}
-                                      {:type :put, :move-id 0}
-                                      {:type :no-op, :size 1}
-                                      {:type :take
-                                       :move-id 0
-                                       :operations [{:type :no-op, :size 1}
-                                                    {:type :update, :elements [(h/hiccup [:li "Foobar"])]}]}]}
-                      (h/hiccup [:ul
-                                 (for [i (range 6)]
-                                   [:li "Item " i])])))))
+         (vdom/comp {:children-ops [{:type :no-op, :size 2}
+                                    {:type :put, :move-id 0}
+                                    {:type :no-op, :size 1}
+                                    {:type :take
+                                     :move-id 0
+                                     :operations [{:type :no-op, :size 1}
+                                                  {:type :update, :elements [(h/hiccup [:li "Foobar"])]}]}]}
+                    (h/hiccup [:ul
+                               (for [i (range 6)]
+                                 [:li "Item " i])])))))

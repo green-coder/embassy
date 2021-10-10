@@ -6,6 +6,9 @@
     [embassy.vdom.core :as vdom]
     [embassy.client.util :as u]))
 
+;; This is a vdom which, when applied on a dom element, does not change it.
+(def identity-vdom nil)
+
 (defn hiccup [x]
   (cond
     (vector? x)
@@ -49,7 +52,7 @@
     (name x)
 
     (nil? x)
-    x
+    nil
 
     :else
     (str x)))
@@ -86,6 +89,28 @@
                      (conj {:type :remove
                             :size size}))})
 
+(defn move [from-index size to-index]
+  (when (pos? size)
+    {:children-ops (if (<= from-index to-index)
+                     (-> []
+                         (skip-n-elements from-index)
+                         (conj {:type     :take
+                                :operations [{:type :no-op
+                                              :size size}]
+                                :move-id 0})
+                         (skip-n-elements (- to-index from-index size))
+                         (conj {:type :put
+                                :move-id 0}))
+                     (-> []
+                         (skip-n-elements to-index)
+                         (conj {:type :put
+                                :move-id 0})
+                         (skip-n-elements (- from-index to-index size))
+                         (conj {:type     :take
+                                :operations [{:type :no-op
+                                              :size size}]
+                                :move-id 0})))}))
+
 (defn update-in [path vdom & more-vdoms]
   (if (seq path)
     (let [[last-path & reversed-path] (reverse path)]
@@ -115,43 +140,15 @@
       ;; The great /dev/null operator - this dom element needs to be deleted.
       {:tag nil})))
 
-(defn move [from-index size to-index]
-  (when (pos? size)
-    {:children-ops (if (<= from-index to-index)
-                     (-> []
-                         (skip-n-elements from-index)
-                         (conj {:type     :take
-                                :operations [{:type :no-op
-                                              :size size}]
-                                :move-id 0})
-                         (skip-n-elements (- to-index from-index size))
-                         (conj {:type :put
-                                :move-id 0}))
-                     (-> []
-                         (skip-n-elements to-index)
-                         (conj {:type :put
-                                :move-id 0})
-                         (skip-n-elements (- from-index to-index size))
-                         (conj {:type     :take
-                                :operations [{:type :no-op
-                                              :size size}]
-                                :move-id 0})))}))
+(defn move-in [path size to-index]
+  (if (seq path)
+    (let [last-path (last path)
+          butlast-path (butlast path)]
+      (update-in butlast-path (apply move last-path size to-index)))
+    identity-vdom))
 
 (defn comp-in-> [path & vdoms]
   (update-in path (apply vdom/comp-> vdoms)))
 
 (defn comp-in [path & vdoms]
   (update-in path (apply vdom/comp vdoms)))
-
-(comment
-
-  (update 5 (hiccup "xxx"))
-  (update-in [9 5] (hiccup "xxx"))
-
-  (remove 5 2)
-  (remove-in [5] 2)
-
-  (insert-in [0 0] (hiccup "xxx"))
-  (insert-in [0 1 5] :a)
-
-  ,)
