@@ -49,14 +49,14 @@
                       [:p "My updated paragraph, " "index 1"]
                       [:p "My updated paragraph, " "index 2"]
                       [:p "My paragraph, " "index 3"]])
-           (vdom/comp (h/hiccup [:main
+           (vdom/comp (h/update 1
+                                (h/hiccup [:p "My updated paragraph, " "index 1"])
+                                (h/hiccup [:p "My updated paragraph, " "index 2"]))
+                      (h/hiccup [:main
                                  [:h1 "My title, " "index 0"]
                                  [:p "My paragraph, " "index 1"]
                                  [:p "My paragraph, " "index 2"]
-                                 [:p "My paragraph, " "index 3"]])
-                      (h/update 1
-                                (h/hiccup [:p "My updated paragraph, " "index 1"])
-                                (h/hiccup [:p "My updated paragraph, " "index 2"])))))))
+                                 [:p "My paragraph, " "index 3"]]))))))
 
 (deftest insert-test
   (testing "Insertions with multiple vdoms are contiguous insertions."
@@ -72,14 +72,14 @@
                       [:p "My paragraph, " "index 1"]
                       [:p "My paragraph, " "index 2"]
                       [:p "My paragraph, " "index 3"]])
-           (vdom/comp (h/hiccup [:main
+           (vdom/comp (h/insert 1
+                                (h/hiccup [:p "My inserted paragraph X"])
+                                (h/hiccup [:p "My inserted paragraph Y"]))
+                      (h/hiccup [:main
                                  [:h1 "My title, " "index 0"]
                                  [:p "My paragraph, " "index 1"]
                                  [:p "My paragraph, " "index 2"]
-                                 [:p "My paragraph, " "index 3"]])
-                      (h/insert 1
-                                (h/hiccup [:p "My inserted paragraph X"])
-                                (h/hiccup [:p "My inserted paragraph Y"])))))))
+                                 [:p "My paragraph, " "index 3"]]))))))
 
 (deftest remove-test
   (testing "Removals with multiple vdoms are contiguous updates"
@@ -91,12 +91,12 @@
     (is (= (h/hiccup [:main
                       [:h1 "My title, " "index 0"]
                       [:p "My paragraph, " "index 3"]])
-           (vdom/comp (h/hiccup [:main
+           (vdom/comp (h/remove 1 2)
+                      (h/hiccup [:main
                                  [:h1 "My title, " "index 0"]
                                  [:p "My paragraph, " "index 1"]
                                  [:p "My paragraph, " "index 2"]
-                                 [:p "My paragraph, " "index 3"]])
-                      (h/remove 1 2))))))
+                                 [:p "My paragraph, " "index 3"]]))))))
 
 (deftest update-in-test
   (testing "Update-in is equivalent to nested calls to update."
@@ -109,12 +109,12 @@
                       [:p "My paragraph, " "index 1"]
                       [:p "My updated paragraph, " "index 2"]
                       [:p "My paragraph, " "index 3"]])
-           (vdom/comp (h/hiccup [:main
+           (vdom/comp (h/update-in [2 0] (h/hiccup "My updated paragraph, "))
+                      (h/hiccup [:main
                                  [:h1 "My title, " "index 0"]
                                  [:p "My paragraph, " "index 1"]
                                  [:p "My paragraph, " "index 2"]
-                                 [:p "My paragraph, " "index 3"]])
-                      (h/update-in [2 0] (h/hiccup "My updated paragraph, ")))))))
+                                 [:p "My paragraph, " "index 3"]]))))))
 
 (deftest insert-in-test
   (testing "Insert-in is equivalent to an insert nested into update calls."
@@ -128,12 +128,12 @@
                       [:p "My paragraph, " "index 1"]
                       [:p "Blablabla ... " "something" "My paragraph, " "index 2"]
                       [:p "My paragraph, " "index 3"]])
-           (vdom/comp (h/hiccup [:main
+           (vdom/comp (h/insert-in [2 0] (h/hiccup "Blablabla ... ") (h/hiccup "something"))
+                      (h/hiccup [:main
                                  [:h1 "My title, " "index 0"]
                                  [:p "My paragraph, " "index 1"]
                                  [:p "My paragraph, " "index 2"]
-                                 [:p "My paragraph, " "index 3"]])
-                      (h/insert-in [2 0] (h/hiccup "Blablabla ... ") (h/hiccup "something")))))))
+                                 [:p "My paragraph, " "index 3"]]))))))
 
 (deftest remove-in-test
   (testing "Remove-in is equivalent to a remove nested into update calls."
@@ -147,12 +147,12 @@
                       [:p "My paragraph, " "index 1"]
                       [:p "index 2"]
                       [:p "My paragraph, " "index 3"]])
-           (vdom/comp (h/hiccup [:main
+           (vdom/comp (h/remove-in [2 0] 1)
+                      (h/hiccup [:main
                                  [:h1 "My title, " "index 0"]
                                  [:p "My paragraph, " "index 1"]
                                  [:p "My paragraph, " "index 2"]
-                                 [:p "My paragraph, " "index 3"]])
-                      (h/remove-in [2 0] 1))))))
+                                 [:p "My paragraph, " "index 3"]]))))))
 
 (deftest move-test
   (testing "Compose a vdom with a child movement to build an updated vdom."
@@ -161,12 +161,12 @@
                       [:h1 "My title, " "index 0"]
                       [:p "My paragraph, " "index 1"]
                       [:p "My paragraph, " "index 3"]])
-           (vdom/comp (h/hiccup [:main
+           (vdom/comp (h/move 0 2 3)
+                      (h/hiccup [:main
                                  [:h1 "My title, " "index 0"]
                                  [:p "My paragraph, " "index 1"]
                                  [:p "My paragraph, " "index 2"]
-                                 [:p "My paragraph, " "index 3"]])
-                      (h/move 0 2 3))))))
+                                 [:p "My paragraph, " "index 3"]]))))))
 
 (deftest move-in-test
   (testing "Move-in is equivalent to a move nested into update calls."
@@ -180,9 +180,9 @@
                       [:p "My paragraph, " "index 1"]
                       [:p "My paragraph, " "index 2"]
                       [:p "My paragraph, " "index 3"]])
-           (vdom/comp (h/hiccup [:main
+           (vdom/comp (h/move-in [0 0] 1 2)
+                      (h/hiccup [:main
                                  [:h1 "My title, " "index 0"]
                                  [:p "My paragraph, " "index 1"]
                                  [:p "My paragraph, " "index 2"]
-                                 [:p "My paragraph, " "index 3"]])
-                      (h/move-in [0 0] 1 2))))))
+                                 [:p "My paragraph, " "index 3"]]))))))
