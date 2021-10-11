@@ -108,7 +108,7 @@
                          (skip-n-elements to-index)
                          (conj {:type :put
                                 :move-id 0})
-                         (skip-n-elements (- from-index to-index size))
+                         (skip-n-elements (- from-index to-index))
                          (conj {:type     :take
                                 :operations [{:type :no-op
                                               :size size}]

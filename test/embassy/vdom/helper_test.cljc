@@ -166,6 +166,12 @@
                                  [:h1 "My title, " "index 0"]
                                  [:p "My paragraph, " "index 1"]
                                  [:p "My paragraph, " "index 2"]
+                                 [:p "My paragraph, " "index 3"]]))
+           (vdom/comp (h/move 2 1 0)
+                      (h/hiccup [:main
+                                 [:h1 "My title, " "index 0"]
+                                 [:p "My paragraph, " "index 1"]
+                                 [:p "My paragraph, " "index 2"]
                                  [:p "My paragraph, " "index 3"]]))))))
 
 (deftest move-in-test
