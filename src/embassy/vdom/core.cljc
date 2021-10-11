@@ -577,33 +577,52 @@
                                       (rest split-base-ops)))))))))
 
 
-;; FIXME: use the new data format
-#_
-(defn- index-ops-canonical
-  "Transform a sequence of index operations into its canonical form.
+(defn- canonical-children-ops
+  "Transform a sequence of children operations into its canonical form.
    The goal is to regroup operations with the same type, as well as to order the
    operations whose order can be reversed so that they are always in the same order.
    It's a kind of normalization process."
-  [iops]
+  [children-ops]
   (into []
-        (cc/comp (partition-by (cc/comp {:no-op :no-op
-                                         :update :update
-                                         :remove :remsert
-                                         :insert :remsert} first))
-                 (mapcat (fn [index-ops]
-                           (let [op (ffirst index-ops)]
-                             (case op
-                               :no-op [[op (transduce (map second) + index-ops)]]
-                               :update [[op (into [] (mapcat second) index-ops)]]
-                               (:remove :insert) (let [{removes :remove
-                                                        inserts :insert} (group-by first index-ops)
-                                                       remove-count (transduce (map second) + removes)
-                                                       insert-elms (into [] (mapcat second) inserts)]
-                                                   (cond-> []
-                                                     (pos? remove-count) (conj [:remove remove-count])
-                                                     (pos? (count insert-elms)) (conj [:insert insert-elms]))))))))
-        iops))
+        (cc/comp (partition-by (fn [child-op]
+                                 (let [op-type (:type child-op)]
+                                   ;; groups those 3 operations together so that we can move
+                                   ;; the :remove and :take ops in front of the :insert ops.
+                                   (if (#{:remove :take :insert} op-type)
+                                     :remove-take-insert
+                                     op-type))))
+                 (mapcat (fn [children-ops]
+                           (case (:type (first children-ops))
+                             :no-op
+                             [{:type :no-op
+                               :size (transduce (map :size) + children-ops)}]
 
+                             :update
+                             [{:type :update
+                               :elements (into [] (mapcat :elements) children-ops)}]
+
+                             (:remove :take :insert)
+                             (let [remove-takes (into []
+                                                      (cc/comp (partition-by :type)
+                                                               (mapcat (fn [children-ops]
+                                                                         (case (:type (first children-ops))
+                                                                           :remove [{:type :remove
+                                                                                     :size (transduce (map :size) + children-ops)}]
+                                                                           :take children-ops
+                                                                           :insert nil))))
+                                                      children-ops)
+                                   insert-elms (into []
+                                                     (cc/comp (filter (fn [child-op]
+                                                                        (= (:type child-op) :insert)))
+                                                              (mapcat :elements))
+                                                     children-ops)]
+                               (cond-> remove-takes
+                                       (seq insert-elms) (conj {:type :insert
+                                                                :elements insert-elms})))
+
+                             :put
+                             children-ops))))
+        children-ops))
 
 (defn comp
   ([vdom] vdom)
@@ -614,8 +633,8 @@
      (nil? vdom2) vdom1
 
      ;; If any vdom is a string
-     (or (string? vdom2)
-         (string? vdom1)) vdom2
+     (or (string? vdom1)
+         (string? vdom2)) vdom2
 
      ;; vdom2 overwrites vdom1
      (contains? vdom2 :tag) vdom2
@@ -739,15 +758,15 @@
            ;; TBD
 
            ;; - Pass 4 -
-           ;; Defragment the sequence of all the vdom-diff operations.
-           defragmented-children-diff (-> children-ops #_index-ops-canonical)]
+           ;; Normalize the sequence of all the children operations.
+           children-ops (canonical-children-ops children-ops)]
        (-> {}
            (cond->
              (seq remove-attrs) (assoc :remove-attrs remove-attrs)
              (seq add-attrs) (assoc :add-attrs add-attrs)
              (seq remove-listeners) (assoc :remove-listeners remove-listeners)
              (seq add-listeners) (assoc :add-listeners add-listeners)
-             (seq children-ops) (assoc :children-ops defragmented-children-diff))
+             (seq children-ops) (assoc :children-ops children-ops))
            not-empty))))
   ([vdom2 vdom1 & more-vdoms]
    (reduce comp (comp vdom2 vdom1) more-vdoms)))

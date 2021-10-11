@@ -213,25 +213,38 @@
            [[:take 2 0] [:no-op 4] [:put 2 0]]))))
 
 
-#_
-(deftest index-ops-canonical-test
-  (are [index-ops expected-result]
-    (= expected-result (#'vdom/index-ops-canonical index-ops))
+(deftest canonical-children-ops-test
+  (is (= [{:type :no-op, :size 6}
 
-    [[:no-op 1] [:remove 1] [:remove 1] [:no-op 1] [:insert [1 2 3]]]
-    [[:no-op 1] [:remove 2] [:no-op 1] [:insert [1 2 3]]]
+          {:type :update, :elements ["new this" "new that"]}
 
-    [[:no-op 2] [:remove 2] [:insert [1 2]] [:insert [3]]]
-    [[:no-op 2] [:remove 2] [:insert [1 2 3]]]
+          {:type :remove, :size 2}
+          {:type       :take, :move-id 1,
+           :operations [{:type :no-op, :size 1}
+                        {:type :update, :elements ["new this" "new that"]}]}
+          {:type :remove, :size 1}
+          {:type :insert, :elements ["insert this" "insert that"]}
 
-    [[:no-op 2] [:insert [1 2]] [:insert [3]] [:remove 1] [:remove 1]]
-    [[:no-op 2] [:remove 2] [:insert [1 2 3]]]
+          {:type :put, :move-id 1}
+          {:type :put, :move-id 2}]
+         (#'vdom/canonical-children-ops [{:type :no-op, :size 1}
+                                         {:type :no-op, :size 5}
 
-    [[:remove 1] [:insert [1 2]] [:remove 1] [:insert [3]]]
-    [[:remove 2] [:insert [1 2 3]]]
+                                         {:type :update, :elements ["new this"]}
+                                         {:type :update, :elements ["new that"]}
 
-    [[:no-op 1] [:no-op 1]]
-    [[:no-op 2]]))
+                                         {:type :insert, :elements ["insert this"]}
+                                         {:type :remove, :size 1}
+                                         {:type :remove, :size 1}
+                                         {:type :insert, :elements ["insert that"]}
+                                         {:type :take, :move-id 1,
+                                          :operations [{:type :no-op, :size 1}
+                                                       {:type :update, :elements ["new this" "new that"]}]}
+                                         {:type :remove, :size 1}
+
+                                         {:type :put, :move-id 1}
+                                         {:type :put, :move-id 2}]))))
+
 
 (deftest comp-test
   (is (= {:tag "ul",
