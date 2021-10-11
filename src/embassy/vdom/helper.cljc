@@ -94,25 +94,31 @@
 
 (defn move [from-index size to-index]
   (when (pos? size)
-    {:children-ops (if (<= from-index to-index)
-                     (-> []
+    (cond
+      (< (+ from-index size) to-index)
+      {:children-ops (-> []
                          (skip-n-elements from-index)
-                         (conj {:type     :take
+                         (conj {:type       :take
                                 :operations [{:type :no-op
                                               :size size}]
-                                :move-id 0})
-                         (skip-n-elements (- to-index from-index size))
-                         (conj {:type :put
-                                :move-id 0}))
-                     (-> []
+                                :move-id    0})
+                         (skip-n-elements (- to-index (+ from-index size)))
+                         (conj {:type    :put
+                                :move-id 0}))}
+
+      (< to-index from-index)
+      {:children-ops (-> []
                          (skip-n-elements to-index)
-                         (conj {:type :put
+                         (conj {:type    :put
                                 :move-id 0})
                          (skip-n-elements (- from-index to-index))
-                         (conj {:type     :take
+                         (conj {:type       :take
                                 :operations [{:type :no-op
                                               :size size}]
-                                :move-id 0})))}))
+                                :move-id    0}))}
+
+      :else ;; (<= from-index to-index (+ from-index size))
+      identity-vdom)))
 
 (defn update-in [path vdom & more-vdoms]
   (when (seq path)

@@ -172,7 +172,13 @@
                                  [:h1 "My title, " "index 0"]
                                  [:p "My paragraph, " "index 1"]
                                  [:p "My paragraph, " "index 2"]
-                                 [:p "My paragraph, " "index 3"]]))))))
+                                 [:p "My paragraph, " "index 3"]])))))
+
+  (testing "Moving some elements from and to the same index is idempotent."
+    (is (= h/identity-vdom
+           (h/move 5 2 5)
+           (h/move 5 2 6)
+           (h/move 5 2 7)))))
 
 (deftest move-in-test
   (testing "Move-in is equivalent to a move nested into update calls."
