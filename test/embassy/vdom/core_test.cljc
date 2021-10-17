@@ -2,7 +2,8 @@
   (:require #?(:clj  [clojure.test :refer [deftest testing is are]]
                :cljs [cljs.test :refer [deftest testing is are] :include-macros true])
             [embassy.vdom.core :as vdom]
-            [embassy.vdom.helper :as h]))
+            [embassy.vdom.helper :as h]
+            [embassy.vdom.util :refer [reduce-right]]))
 
 
 #_
@@ -219,15 +220,18 @@
           {:type :update, :elements ["new this" "new that"]}
 
           {:type :remove, :size 2}
-          {:type       :take, :move-id 1,
-           :operations [{:type :no-op, :size 1}
-                        {:type :update, :elements ["new this" "new that"]}]}
+          {:type :take, :move-id 1, :operations [{:type :no-op, :size 1}
+                                                 {:type :update, :elements ["new this" "new that"]}]}
+          {:type :take, :move-id 2, :operations [{:type :no-op, :size 1}]}
           {:type :remove, :size 1}
           {:type :insert, :elements ["insert this" "insert that"]}
 
           {:type :put, :move-id 1}
           {:type :put, :move-id 2}]
-         (#'vdom/canonical-children-ops [{:type :no-op, :size 1}
+         (#'vdom/canonical-children-ops {1 {:operations [{:type :no-op, :size 1}
+                                                         {:type :update, :elements ["new this" "new that"]}]}
+                                         2 {:operations [{:type :no-op, :size 1}]}}
+                                        [{:type :no-op, :size 1}
                                          {:type :no-op, :size 5}
 
                                          {:type :update, :elements ["new this"]}
@@ -237,9 +241,10 @@
                                          {:type :remove, :size 1}
                                          {:type :remove, :size 1}
                                          {:type :insert, :elements ["insert that"]}
-                                         {:type :take, :move-id 1,
-                                          :operations [{:type :no-op, :size 1}
-                                                       {:type :update, :elements ["new this" "new that"]}]}
+                                         {:type :take, :size 1, :move-id 1}
+                                         {:type :take, :size 2, :move-id 1}
+                                         {:type :take, :move-id 2}
+
                                          {:type :remove, :size 1}
 
                                          {:type :put, :move-id 1}
@@ -247,20 +252,20 @@
 
 
 (deftest comp-test
-  (is (= {:tag "ul",
-          :children [{:tag "li", :children ["Item " "0"]}
-                     {:tag "li", :children ["Item " "1"]}
-                     {:tag "li", :children ["Item " "3"]}
-                     {:tag "li", :children ["Foobar"]}
-                     {:tag "li", :children ["Item " "2"]}
-                     {:tag "li", :children ["Item " "5"]}]}
-         (vdom/comp {:children-ops [{:type :no-op, :size 2}
-                                    {:type :put, :move-id 0}
-                                    {:type :no-op, :size 1}
-                                    {:type :take
-                                     :move-id 0
-                                     :operations [{:type :no-op, :size 1}
-                                                  {:type :update, :elements [(h/hiccup [:li "Foobar"])]}]}]}
-                    (h/hiccup [:ul
-                               (for [i (range 6)]
-                                 [:li "Item " i])])))))
+  (is (= {:children-ops [{:type :no-op, :size 2}
+                         {:type :put, :move-id 0}
+                         {:type :no-op, :size 1}
+                         {:type :take, :move-id 0
+                          :operations [{:type :no-op, :size 1}
+                                       {:type :update, :elements [(h/hiccup :x)]}
+                                       {:type :no-op, :size 2}]}]}
+         (vdom/comp (h/move 3 4 2)
+                    (h/update 4 (h/hiccup :x)))))
+
+  (is (= (h/hiccup [:div 0 1 3 :x 2 5])
+         (reduce vdom/comp [(h/move 3 2 2)
+                            (h/update 4 (h/hiccup :x))
+                            (h/hiccup [:div (range 6)])])
+         (reduce-right vdom/comp [(h/move 3 2 2)
+                                  (h/update 4 (h/hiccup :x))
+                                  (h/hiccup [:div (range 6)])]))))

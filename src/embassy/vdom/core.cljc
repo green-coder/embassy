@@ -577,51 +577,73 @@
                                       (rest split-base-ops)))))))))
 
 
+(defn- merge-same-children-ops
+  "Merges together a sequence of child operations of the same type."
+  [children-ops]
+  (let [first-child (first children-ops)]
+    (case (:type first-child)
+      :no-op {:type :no-op
+              :size (transduce (map :size) + children-ops)}
+
+      :update {:type :update
+               :elements (into [] (mapcat :elements) children-ops)}
+
+      :remove {:type :remove
+               :size (transduce (map :size) + children-ops)}
+
+      :take (let [move-id (:move-id first-child)]
+              {:type :take
+               :move-id move-id})
+
+      :insert {:type :insert
+               :elements (into [] (mapcat :elements) children-ops)}
+
+      :put (let [move-id (:move-id first-child)]
+             {:type :put
+              :move-id move-id}))))
+
+
 (defn- canonical-children-ops
   "Transform a sequence of children operations into its canonical form.
    The goal is to regroup operations with the same type, as well as to order the
    operations whose order can be reversed so that they are always in the same order.
    It's a kind of normalization process."
-  [children-ops]
+  [move-id->state children-ops]
   (into []
         (cc/comp (partition-by (fn [child-op]
                                  (let [op-type (:type child-op)]
-                                   ;; groups those 3 operations together so that we can move
-                                   ;; the :remove and :take ops in front of the :insert ops.
-                                   (if (#{:remove :take :insert} op-type)
-                                     :remove-take-insert
+                                   (if (#{:remove :take :insert :put} op-type)
+                                     :remove-take-insert-put
                                      op-type))))
                  (mapcat (fn [children-ops]
-                           (case (:type (first children-ops))
-                             :no-op
-                             [{:type :no-op
-                               :size (transduce (map :size) + children-ops)}]
-
-                             :update
-                             [{:type :update
-                               :elements (into [] (mapcat :elements) children-ops)}]
-
-                             (:remove :take :insert)
-                             (let [remove-takes (into []
-                                                      (cc/comp (partition-by :type)
-                                                               (mapcat (fn [children-ops]
-                                                                         (case (:type (first children-ops))
-                                                                           :remove [{:type :remove
-                                                                                     :size (transduce (map :size) + children-ops)}]
-                                                                           :take children-ops
-                                                                           :insert nil))))
-                                                      children-ops)
-                                   insert-elms (into []
-                                                     (cc/comp (filter (fn [child-op]
-                                                                        (= (:type child-op) :insert)))
-                                                              (mapcat :elements))
-                                                     children-ops)]
-                               (cond-> remove-takes
-                                       (seq insert-elms) (conj {:type :insert
-                                                                :elements insert-elms})))
-
-                             :put
-                             children-ops))))
+                           (if (#{:remove :take :insert :put} (:type (first children-ops)))
+                             (let [;; Divide the partition into 2 groups while maintaining the order in each group.
+                                   {:keys [removes-takes inserts-puts]} (group-by (cc/comp {:remove :removes-takes
+                                                                                            :take   :removes-takes
+                                                                                            :insert :inserts-puts
+                                                                                            :put    :inserts-puts} :type) children-ops)
+                                   ;; Merge the consecutive :remove and :take ops with the same :move-id.
+                                   removes-takes (into []
+                                                       (cc/comp (partition-by (juxt :type :move-id))
+                                                                (map merge-same-children-ops))
+                                                       removes-takes)
+                                   ;; Merge the consecutive :insert and :put ops with the same :move-id.
+                                   inserts-puts (into []
+                                                      (cc/comp (partition-by (juxt :type :move-id))
+                                                               (map merge-same-children-ops))
+                                                      inserts-puts)]
+                               ;; TODO: merge the removes-takes with the insert-puts. Some pairs can be simplified:
+                               ;; - :remove + :insert child -> :update child
+                               ;; - :take move-id + :put move-id -> :no-op or :update moved-elements
+                               (into removes-takes inserts-puts))
+                             children-ops)))
+                 ;; Merge the :no-op and :update operations
+                 (partition-by (juxt :type :move-id))
+                 (map merge-same-children-ops)
+                 (map (fn [child-op]
+                        (cond-> child-op
+                          (= (:type child-op) :take)
+                          (assoc :operations (-> (:move-id child-op) move-id->state :operations))))))
         children-ops))
 
 (defn comp
@@ -759,7 +781,7 @@
 
            ;; - Pass 4 -
            ;; Normalize the sequence of all the children operations.
-           children-ops (canonical-children-ops children-ops)]
+           children-ops (canonical-children-ops move-id->state children-ops)]
        (-> {}
            (cond->
              (seq remove-attrs) (assoc :remove-attrs remove-attrs)
