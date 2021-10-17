@@ -495,86 +495,89 @@
                            (rest split-new-ops)
                            (rest split-base-ops)))
 
-                  :insert (case (:type new-op)
-                            :no-op (recur output-move-id->state
-                                          (conj output base-op)
-                                          (rest split-new-ops)
-                                          (rest split-base-ops))
-                            :update (recur output-move-id->state
-                                           (conj output {:type :insert
-                                                         :elements (mapv comp (:elements new-op) (:elements base-op))})
-                                           (rest split-new-ops)
-                                           (rest split-base-ops))
-                            :remove (recur output-move-id->state
-                                           output
-                                           (rest split-new-ops)
-                                           (rest split-base-ops))
-                            :take (recur (update output-move-id->state (:move-id new-op)
-                                                 (fn [{:keys [take-index] :as move-state}]
-                                                   (-> move-state
-                                                       (update :take-index + op-size)
-                                                       (update :operations update-taken-operations take-index op-size
-                                                               (fn [taken-op]
-                                                                 (case (:type taken-op)
-                                                                   :no-op base-op
-                                                                   :update {:type :insert
-                                                                            :elements (mapv comp (:elements taken-op) (:elements base-op))}))))))
-                                         (conj output new-op)
-                                         (rest split-new-ops)
-                                         (rest split-base-ops)))
-                  :put (case (:type new-op)
-                         :no-op (recur (update-in output-move-id->state [(:move-id base-op) :put-index] + op-size)
-                                       (conj output base-op)
-                                       (rest split-new-ops)
-                                       (rest split-base-ops))
-                         :update (recur (update output-move-id->state (:move-id base-op)
-                                                (fn [{:keys [put-index] :as move-state}]
-                                                  (-> move-state
-                                                      (update :put-index + op-size)
-                                                      (update :operations update-taken-operations put-index op-size
-                                                              (fn [taken-op]
-                                                                (case (:type taken-op)
-                                                                  :no-op new-op
-                                                                  :update {:type :update
-                                                                           :elements (mapv comp (:elements new-op) (:elements taken-op))}))))))
-                                        (conj output base-op)
-                                        (rest split-new-ops)
-                                        (rest split-base-ops))
-                         :remove (recur (update output-move-id->state (:move-id base-op)
-                                                (fn [{:keys [put-index] :as move-state}]
-                                                  (-> move-state
-                                                      (update :put-index + op-size)
-                                                      (update :operations update-taken-operations put-index op-size
-                                                              (fn [_] new-op)))))
-                                        (conj output base-op)
-                                        (rest split-new-ops)
-                                        (rest split-base-ops))
-                         :take (recur (-> output-move-id->state
-                                          (update (:move-id base-op)
-                                                  (fn [{:keys [put-index] :as move-state}]
-                                                    (-> move-state
-                                                        (update :put-index + op-size)
-                                                        (update :operations update-taken-operations put-index op-size
-                                                                (fn [base-op]
-                                                                  (let [new-move-state (output-move-id->state (:move-id new-op))
-                                                                        new-frag       (get-sub-op (:operations new-move-state)
-                                                                                                   (:take-index new-move-state)
-                                                                                                   op-size)]
-                                                                    (case [(:type new-frag) (:type base-op)]
-                                                                      [:no-op :no-op] base-op
-                                                                      [:no-op :update] base-op
-                                                                      [:update :no-op] new-frag
-                                                                      [:update :update] [:update (mapv comp (:elements new-frag) (:elements base-op))])))))))
-                                          (update (:move-id new-op)
-                                                  (fn [{:keys [take-index] :as state}]
-                                                    (-> state
-                                                        (update :take-index + op-size)
-                                                        (update :operations update-taken-operations take-index op-size
-                                                                (fn [_] {:type :do-not-take
-                                                                         :size op-size}))))))
-                                      (conj output base-op new-op) ;; new-iop will be discarded in the phase 3
-                                      (rest split-new-ops)
-                                      (rest split-base-ops)))))))))
+                  :insert
+                  (case (:type new-op)
+                    :no-op (recur output-move-id->state
+                                  (conj output base-op)
+                                  (rest split-new-ops)
+                                  (rest split-base-ops))
+                    :update (recur output-move-id->state
+                                   (conj output {:type :insert
+                                                 :elements (mapv comp (:elements new-op) (:elements base-op))})
+                                   (rest split-new-ops)
+                                   (rest split-base-ops))
+                    :remove (recur output-move-id->state
+                                   output
+                                   (rest split-new-ops)
+                                   (rest split-base-ops))
+                    :take (recur (update output-move-id->state (:move-id new-op)
+                                         (fn [{:keys [take-index] :as move-state}]
+                                           (-> move-state
+                                               (update :take-index + op-size)
+                                               (update :operations update-taken-operations take-index op-size
+                                                       (fn [taken-op]
+                                                         (case (:type taken-op)
+                                                           :no-op base-op
+                                                           :update {:type :insert
+                                                                    :elements (mapv comp (:elements taken-op) (:elements base-op))}))))))
+                                 (conj output new-op)
+                                 (rest split-new-ops)
+                                 (rest split-base-ops)))
+
+                  :put
+                  (case (:type new-op)
+                    :no-op (recur (update-in output-move-id->state [(:move-id base-op) :put-index] + op-size)
+                                  (conj output base-op)
+                                  (rest split-new-ops)
+                                  (rest split-base-ops))
+                    :update (recur (update output-move-id->state (:move-id base-op)
+                                           (fn [{:keys [put-index] :as move-state}]
+                                             (-> move-state
+                                                 (update :put-index + op-size)
+                                                 (update :operations update-taken-operations put-index op-size
+                                                         (fn [taken-op]
+                                                           (case (:type taken-op)
+                                                             :no-op new-op
+                                                             :update {:type :update
+                                                                      :elements (mapv comp (:elements new-op) (:elements taken-op))}))))))
+                                   (conj output base-op)
+                                   (rest split-new-ops)
+                                   (rest split-base-ops))
+                    :remove (recur (update output-move-id->state (:move-id base-op)
+                                           (fn [{:keys [put-index] :as move-state}]
+                                             (-> move-state
+                                                 (update :put-index + op-size)
+                                                 (update :operations update-taken-operations put-index op-size
+                                                         (fn [_] new-op)))))
+                                   (conj output base-op)
+                                   (rest split-new-ops)
+                                   (rest split-base-ops))
+                    :take (recur (-> output-move-id->state
+                                     (update (:move-id base-op)
+                                             (fn [{:keys [put-index] :as move-state}]
+                                               (-> move-state
+                                                   (update :put-index + op-size)
+                                                   (update :operations update-taken-operations put-index op-size
+                                                           (fn [base-op]
+                                                             (let [new-move-state (output-move-id->state (:move-id new-op))
+                                                                   new-frag       (get-sub-op (:operations new-move-state)
+                                                                                              (:take-index new-move-state)
+                                                                                              op-size)]
+                                                               (case [(:type new-frag) (:type base-op)]
+                                                                 [:no-op :no-op] base-op
+                                                                 [:no-op :update] base-op
+                                                                 [:update :no-op] new-frag
+                                                                 [:update :update] [:update (mapv comp (:elements new-frag) (:elements base-op))])))))))
+                                     (update (:move-id new-op)
+                                             (fn [{:keys [take-index] :as state}]
+                                               (-> state
+                                                   (update :take-index + op-size)
+                                                   (update :operations update-taken-operations take-index op-size
+                                                           (fn [_] {:type :do-not-take
+                                                                    :size op-size}))))))
+                                 (conj output base-op new-op) ;; new-iop will be discarded in the phase 3
+                                 (rest split-new-ops)
+                                 (rest split-base-ops)))))))))
 
 
 (defn- merge-same-children-ops
