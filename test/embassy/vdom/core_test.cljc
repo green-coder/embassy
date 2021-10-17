@@ -121,97 +121,147 @@
              (fn [operation] (assoc operation 0 :foobar)))))))
 
 
-#_
 (deftest index-ops-comp-test
-  (is (= [{}
-          [[:no-op 1] [:remove 1] [:remove 1] [:no-op 1] [:insert [1 2 3]]]]
-         (#'vdom/index-ops-comp
-           {} [[:no-op 2] [:insert [1 2 3]]]
-           {} [[:no-op 1] [:remove 2]])))
+  (testing ":insert on :remove"
+    (is (= [{} [{:type :no-op, :size 1}
+                {:type :remove, :size 1}
+                {:type :remove, :size 1}
+                {:type :no-op, :size 1}
+                {:type :insert, :elements [1 2 3]}]]
+           (#'vdom/index-ops-comp
+             {} [{:type :no-op, :size 2}
+                 {:type :insert, :elements [1 2 3]}]
+             {} [{:type :no-op, :size 1}
+                 {:type :remove, :size 2}]))))
 
-  (is (= [{}
-          [[:no-op 2] [:insert [1 2]] [:insert [3]] [:remove 1] [:remove 1]]]
-         (#'vdom/index-ops-comp
-           {} [[:no-op 2] [:insert [1 2 3]]]
-           {} [[:no-op 2] [:remove 2]])))
+  (testing ":insert on :remove, with more fragmentation"
+    (is (= [{} [{:type :no-op, :size 2}
+                {:type :insert, :elements [1 2]}
+                {:type :insert, :elements [3]}
+                {:type :remove, :size 1}
+                {:type :remove, :size 1}]]
+           (#'vdom/index-ops-comp
+             {} [{:type :no-op, :size 2}
+                 {:type :insert, :elements [1 2 3]}]
+             {} [{:type :no-op, :size 2}
+                 {:type :remove, :size 2}]))))
 
-  (is (= [{0 {:size 6
-               :fragments []
-               :put-index 6
-               :take-index 6}}
-          [[:take 2 0] [:take 2 0] [:take 2 0] [:no-op 2] [:remove 2] [:put 6 0]]]
-         (#'vdom/index-ops-comp
-           {}
-           [[:no-op 2] [:remove 2]]
-           {0 {:size 6
-               :fragments []}}
-           [[:take 6 0] [:no-op 4] [:put 6 0]])))
+  (testing ":remove on the middle of a :take"
+    (is (= [{0 {:move-id 0
+                :operations [{:type :no-op, :size 6}]
+                :take-index 6
+                :put-index 6}}
+            [{:type :take, :move-id 0, :size 2}
+             {:type :take, :move-id 0, :size 2}
+             {:type :take, :move-id 0, :size 2}
+             {:type :no-op, :size 2}
+             {:type :remove, :size 2}
+             {:type :put, :move-id 0, :size 6}]]
+           (#'vdom/index-ops-comp
+             {}
+             [{:type :no-op, :size 2}
+              {:type :remove, :size 2}]
+             {0 {:move-id 0
+                 :operations [{:type :no-op, :size 6}]}}
+             [{:type :take, :move-id 0, :size 6}
+              {:type :no-op, :size 4}
+              {:type :put, :move-id 0, :size 6}]))))
 
-  (is (= [{0 {:size       2
-              :fragments  [[:update ["x" "y"]]]
-              :take-index 2
-              :put-index  2}}
-          [[:put 2 0] [:no-op 4] [:take 2 0]]]
-         (#'vdom/index-ops-comp
-           {}
-           [[:update ["x" "y"]]]
-           {0 {:size 2
-               :fragments [[:no-op 2]]}}
-           [[:put 2 0] [:no-op 4] [:take 2 0]])))
+  (testing ":update on put :no-op"
+    (is (= [{0 {:move-id 0
+                :operations [{:type :update, :elements ["x" "y"]}]
+                :take-index 2
+                :put-index 2}}
+            [{:type :put, :move-id 0, :size 2}
+             {:type :no-op, :size 4}
+             {:type :take, :move-id 0, :size 2}]]
+           (#'vdom/index-ops-comp
+             {}
+             [{:type :update, :elements ["x" "y"]}]
+             {0 {:move-id 0
+                 :operations [{:type :no-op, :size 2}]}}
+             [{:type :put, :move-id 0, :size 2}
+              {:type :no-op, :size 4}
+              {:type :take, :move-id 0, :size 2}]))))
 
-  (is (= [{0 {:size       2
-              :fragments  [[:update ["x" "y"]]]
-              :take-index 2
-              :put-index  2}}
-          [[:take 2 0] [:no-op 4] [:put 2 0]]]
-         (#'vdom/index-ops-comp
-           {0 {:size 2
-               :fragments [[:no-op 2]]}}
-           [[:take 2 0] [:no-op 4] [:put 2 0]]
-           {}
-           [[:update ["x" "y"]]])))
+  (testing "taken :no-op on :update"
+    (is (= [{0 {:move-id 0
+                :operations [{:type :update, :elements ["x" "y"]}]
+                :take-index 2
+                :put-index 2}}
+            [{:type :take, :move-id 0, :size 2}
+             {:type :no-op, :size 4}
+             {:type :put, :move-id 0, :size 2}]]
+           (#'vdom/index-ops-comp
+             {0 {:move-id 0
+                 :operations [{:type :no-op, :size 2}]}}
+             [{:type :take, :move-id 0, :size 2}
+              {:type :no-op, :size 4}
+              {:type :put, :move-id 0, :size 2}]
+             {}
+             [{:type :update, :elements ["x" "y"]}]))))
 
-  (is (= [{0 {:size       2
-              :fragments  [[:insert ["x" "y"]]]
-              :take-index 2
-              :put-index  2}}
-          [[:take 2 0] [:no-op 4] [:put 2 0]]]
-         (#'vdom/index-ops-comp
-           {0 {:size 2
-               :fragments [[:no-op 2]]}}
-           [[:take 2 0] [:no-op 4] [:put 2 0]]
-           {}
-           [[:insert ["x" "y"]]])))
+  (testing "taken :no-op on :insert"
+    (is (= [{0 {:move-id 0
+                :operations [{:type :insert, :elements ["x" "y"]}]
+                :take-index 2
+                :put-index 2}}
+            [{:type :take, :move-id 0, :size 2}
+             {:type :no-op, :size 4}
+             {:type :put, :move-id 0, :size 2}]]
+           (#'vdom/index-ops-comp
+             {0 {:move-id 0
+                 :operations [{:type :no-op, :size 2}]}}
+             [{:type :take, :move-id 0, :size 2}
+              {:type :no-op, :size 4}
+              {:type :put, :move-id 0, :size 2}]
+             {}
+             [{:type :insert, :elements ["x" "y"]}]))))
 
-  (is (= [{0 {:size       2
-              :fragments  [[:insert ["xx" "yy"]]]
-              :take-index 2
-              :put-index  2}}
-          [[:take 2 0] [:no-op 4] [:put 2 0]]]
-         (#'vdom/index-ops-comp
-           {0 {:size 2
-               :fragments [[:update ["xx" "yy"]]]}}
-           [[:take 2 0] [:no-op 4] [:put 2 0]]
-           {}
-           [[:insert ["x" "y"]]])))
+  (testing "taken :update on :insert"
+    (is (= [{0 {:move-id 0
+                :operations [{:type :insert, :elements ["xx" "yy"]}]
+                :take-index 2
+                :put-index 2}}
+            [{:type :take, :move-id 0, :size 2}
+             {:type :no-op, :size 4}
+             {:type :put, :move-id 0, :size 2}]]
+           (#'vdom/index-ops-comp
+             {0 {:move-id 0
+                 :operations [{:type :update, :elements ["xx" "yy"]}]}}
+             [{:type :take, :move-id 0, :size 2}
+              {:type :no-op, :size 4}
+              {:type :put, :move-id 0, :size 2}]
+             {}
+             [{:type :insert, :elements ["x" "y"]}]))))
 
   ;; TODO: Some information is missing to know how to update the take/put base/new in the next pass.
-  (is (= [{0 {:size       2
-              :fragments  [[:no-op 2]]
-              :take-index 2
-              :put-index  2}
-           1 {:size 2
-              :fragments  [[:do-not-take 2]]
-              :take-index 2
-              :put-index  2}}
-          [[:put 2 1] [:take 2 0] [:no-op 2] [:no-op 2] [:put 2 0] [:take 2 1]]]
-         (#'vdom/index-ops-comp
-           {1 {:size 2
-               :fragments [[:no-op 2]]}}
-           [[:put 2 1] [:no-op 4] [:take 2 1]]
-           {0 {:size 2
-               :fragments [[:no-op 2]]}}
-           [[:take 2 0] [:no-op 4] [:put 2 0]]))))
+  (testing ":put on :take and :take on :put"
+    (is (= [{0 {:move-id 0
+                :operations [{:type :no-op, :size 2}]
+                :take-index 2
+                :put-index 2},
+             1 {:move-id 1
+                :operations [{:type :do-not-take, :size 2}]
+                :take-index 2
+                :put-index 2}}
+            [{:type :put, :move-id 1, :size 2}
+             {:type :take, :move-id 0, :size 2}
+             {:type :no-op, :size 2}
+             {:type :no-op, :size 2}
+             {:type :put, :move-id 0, :size 2}
+             {:type :take, :move-id 1, :size 2}]]
+           (#'vdom/index-ops-comp
+             {1 {:move-id 1
+                 :operations [{:type :no-op, :size 2}]}}
+             [{:type :put, :move-id 1, :size 2}
+              {:type :no-op, :size 4}
+              {:type :take, :move-id 1, :size 2}]
+             {0 {:move-id 0
+                 :operations [{:type :no-op, :size 2}]}}
+             [{:type :take, :move-id 0, :size 2}
+              {:type :no-op, :size 4}
+              {:type :put, :move-id 0, :size 2}])))))
 
 
 (deftest canonical-children-ops-test
