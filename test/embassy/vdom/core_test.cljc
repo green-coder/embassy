@@ -252,20 +252,43 @@
 
 
 (deftest comp-test
-  (is (= {:children-ops [{:type :no-op, :size 2}
-                         {:type :put, :move-id 0}
-                         {:type :no-op, :size 1}
-                         {:type :take, :move-id 0
-                          :operations [{:type :no-op, :size 1}
-                                       {:type :update, :elements [(h/hiccup :x)]}
-                                       {:type :no-op, :size 2}]}]}
-         (vdom/comp (h/move 3 4 2)
-                    (h/update 4 (h/hiccup :x)))))
+  (testing "Low level inspection of moving an update."
+    (is (= {:children-ops [{:type :no-op, :size 2}
+                           {:type :put, :move-id 0}
+                           {:type :no-op, :size 1}
+                           {:type :take, :move-id 0
+                            :operations [{:type :no-op, :size 1}
+                                         {:type :update, :elements [(h/hiccup :x)]}
+                                         {:type :no-op, :size 2}]}]}
+           (vdom/comp (h/move 3 4 2)
+                      (h/update 4 (h/hiccup :x))))))
 
-  (is (= (h/hiccup [:div 0 1 3 :x 2 5])
-         (reduce vdom/comp [(h/move 3 2 2)
-                            (h/update 4 (h/hiccup :x))
-                            (h/hiccup [:div (range 6)])])
-         (reduce-right vdom/comp [(h/move 3 2 2)
-                                  (h/update 4 (h/hiccup :x))
-                                  (h/hiccup [:div (range 6)])]))))
+  (testing "Comp's associativity: Moving an update should compose in any order."
+    (is (= (h/hiccup [:div 0 1 3 :x 2 5])
+           (reduce vdom/comp [(h/move 3 2 2)
+                              (h/update 4 (h/hiccup :x))
+                              (h/hiccup [:div (range 6)])])
+           (reduce-right vdom/comp [(h/move 3 2 2)
+                                    (h/update 4 (h/hiccup :x))
+                                    (h/hiccup [:div (range 6)])]))))
+
+  #_
+  (testing "Moving something somewhere, then to somewhere else."
+    (is (= (vdom/comp (h/move 0 2 4)
+                      (h/hiccup [:div (range 6)]))
+           (reduce vdom/comp [(h/move 1 2 4)
+                              (h/move 0 2 3)
+                              (h/hiccup [:div (range 6)])])
+           #_(reduce-right vdom/comp [(h/move 1 2 4)
+                                      (h/move 0 2 3)
+                                      (h/hiccup [:div (range 6)])]))))
+
+  #_
+  (testing "Moving an insertion"
+    (is (= (h/insert 2 :a :b)
+           (reduce vdom/comp [(h/move 0 2 4)
+                              (h/insert 0 :b)
+                              (h/insert 0 :a)])
+           (reduce-right vdom/comp [(h/move 0 2 4)
+                                    (h/insert 0 :b)
+                                    (h/insert 0 :a)])))))
